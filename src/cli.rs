@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -5,7 +6,9 @@ use std::process::ExitCode;
 use clap::ColorChoice as ClapColorChoice;
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand};
+use serde::Serialize;
 
+use crate::credentials::{self, KeySource, LoginReport, LogoutReport, StatusReport, Warning};
 use crate::errors::TcampError;
 use crate::harness::{self, Harness};
 use crate::output;
@@ -204,22 +207,35 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
         return Ok(());
     };
 
-    match &command {
-        Command::Claude(args) | Command::Pi(args) | Command::Kimi(args) => {
-            let name = command_name(&command);
-            if cli.json && !args.no_launch && !args.dry_run {
-                return Err(TcampError::usage(
-                    format!("`--json` cannot be combined with launching `{name}`"),
-                    format!(
-                        "use `tcamp {name} --no-launch --json` or `tcamp {name} --dry-run --json`"
-                    ),
-                ));
-            }
+    if let Command::Claude(args) | Command::Pi(args) | Command::Kimi(args) = &command {
+        let name = command_name(&command);
+        if cli.json && !args.no_launch && !args.dry_run {
+            return Err(TcampError::usage(
+                format!("`--json` cannot be combined with launching `{name}`"),
+                format!("use `tcamp {name} --no-launch --json` or `tcamp {name} --dry-run --json`"),
+            ));
         }
-        _ => {}
     }
 
-    Err(TcampError::not_implemented(command_name(&command)))
+    let name = command_name(&command);
+    match command {
+        Command::Login(args) => match credentials::login(args, cli.json)? {
+            Some(report) => print_login_report(report, cli.json),
+            None => {
+                if !cli.json {
+                    println!("No changes.");
+                }
+                Ok(())
+            }
+        },
+        Command::Logout(args) => print_logout_report(credentials::logout(args)?, cli.json),
+        Command::Status => print_status_report(credentials::status()?, cli.json),
+        Command::Claude(_)
+        | Command::Pi(_)
+        | Command::Kimi(_)
+        | Command::Doctor(_)
+        | Command::Uninstall(_) => Err(TcampError::not_implemented(name)),
+    }
 }
 
 fn command_name(command: &Command) -> &'static str {
@@ -319,4 +335,146 @@ fn has_flag(args: &[OsString], flag: &str) -> bool {
         .skip(1)
         .take_while(|arg| arg.to_str() != Some("--"))
         .any(|arg| arg.to_str() == Some(flag))
+}
+
+#[derive(Serialize)]
+struct SuccessReport {
+    ok: bool,
+    base_url: Option<String>,
+    key: Option<KeyReport>,
+    harnesses: BTreeMap<String, serde_json::Value>,
+    warnings: Vec<WarningReport>,
+}
+
+#[derive(Serialize)]
+struct KeyReport {
+    masked: String,
+    source: &'static str,
+    verified: bool,
+    verified_at: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WarningReport {
+    code: String,
+    message: String,
+}
+
+fn warning_reports(warnings: &[Warning]) -> Vec<WarningReport> {
+    warnings
+        .iter()
+        .map(|warning| WarningReport {
+            code: warning.code.clone(),
+            message: warning.message.clone(),
+        })
+        .collect()
+}
+
+fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: Some(report.base_url),
+            key: Some(KeyReport {
+                masked: report.masked_key,
+                source: report.source.as_str(),
+                verified: report.verified_at.is_some(),
+                verified_at: report.verified_at,
+            }),
+            harnesses: BTreeMap::new(),
+            warnings: warning_reports(&report.warnings),
+        });
+    }
+
+    if report.source == KeySource::Env {
+        eprintln!("Using API key from TOKENCAMP_API_KEY");
+    }
+    println!("Saved API key: {}", report.masked_key);
+    println!("Base URL: {}", report.base_url);
+    if let Some(verified_at) = &report.verified_at {
+        println!("Verified at: {verified_at}");
+    }
+    print_warnings(&report.warnings);
+    Ok(())
+}
+
+fn print_logout_report(report: LogoutReport, json: bool) -> Result<(), TcampError> {
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: report.base_url,
+            key: None,
+            harnesses: BTreeMap::new(),
+            warnings: warning_reports(&report.warnings),
+        });
+    }
+
+    if report.all {
+        if report.removed.is_empty() {
+            println!("No stored credentials.");
+        } else {
+            println!("Removed all stored credentials.");
+        }
+    } else if let Some(base_url) = &report.base_url {
+        if report.removed.contains(base_url) {
+            println!("Removed credential for {base_url}.");
+        } else {
+            println!("No credential found for {base_url}.");
+        }
+    } else {
+        println!("No active connection.");
+    }
+    print_warnings(&report.warnings);
+    Ok(())
+}
+
+fn print_status_report(report: StatusReport, json: bool) -> Result<(), TcampError> {
+    let key = match (&report.masked_key, report.source) {
+        (Some(masked), Some(source)) => Some(KeyReport {
+            masked: masked.clone(),
+            source: source.as_str(),
+            verified: report.verified_at.is_some(),
+            verified_at: report.verified_at.clone(),
+        }),
+        _ => None,
+    };
+
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: Some(report.base_url),
+            key,
+            harnesses: BTreeMap::new(),
+            warnings: warning_reports(&report.warnings),
+        });
+    }
+
+    println!("Base URL: {}", report.base_url);
+    match &key {
+        Some(key) => println!("API key: {} (source: {})", key.masked, key.source),
+        None => println!("API key: none"),
+    }
+    if let Some(verified_at) = &report.verified_at {
+        println!("Verified at: {verified_at}");
+    }
+    println!("Credentials: {}", report.credentials_path.display());
+    print_warnings(&report.warnings);
+    Ok(())
+}
+
+fn print_json(report: &SuccessReport) -> Result<(), TcampError> {
+    let payload = serde_json::to_string(report).map_err(|error| {
+        TcampError::io(
+            format!("failed to encode the result as JSON: {error}"),
+            "re-run without `--json`",
+        )
+    })?;
+    println!("{payload}");
+    Ok(())
+}
+
+fn print_warnings(warnings: &[Warning]) {
+    for warning in warnings {
+        eprintln!("warning: {} [{}]", warning.message, warning.code);
+    }
 }

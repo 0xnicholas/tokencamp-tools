@@ -8,6 +8,8 @@ pub enum ErrorCode {
     ConfigConflict,
     ConfigUnreadable,
     Network,
+    Authentication,
+    Io,
 }
 
 impl ErrorCode {
@@ -19,12 +21,14 @@ impl ErrorCode {
             Self::ConfigConflict => "config_conflict",
             Self::ConfigUnreadable => "config_unreadable",
             Self::Network => "network",
+            Self::Authentication => "authentication",
+            Self::Io => "io",
         }
     }
 
     pub fn exit_code(self) -> u8 {
         match self {
-            Self::Network => 1,
+            Self::Network | Self::Authentication | Self::Io => 1,
             _ => 2,
         }
     }
@@ -34,6 +38,7 @@ impl ErrorCode {
 #[error("{message}")]
 pub struct TcampError {
     code: ErrorCode,
+    remote_code: Option<String>,
     message: String,
     hint: String,
     request_id: Option<String>,
@@ -43,6 +48,7 @@ impl TcampError {
     pub fn new(code: ErrorCode, message: impl Into<String>, hint: impl Into<String>) -> Self {
         Self {
             code,
+            remote_code: None,
             message: message.into(),
             hint: hint.into(),
             request_id: None,
@@ -73,6 +79,19 @@ impl TcampError {
         Self::new(ErrorCode::Network, message, hint)
     }
 
+    pub fn authentication(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Authentication, message, hint)
+    }
+
+    pub fn io(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Io, message, hint)
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.remote_code = Some(code.into());
+        self
+    }
+
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
         self.request_id = Some(request_id.into());
         self
@@ -85,8 +104,10 @@ impl TcampError {
         )
     }
 
-    pub fn code(&self) -> &'static str {
-        self.code.as_str()
+    pub fn code(&self) -> &str {
+        self.remote_code
+            .as_deref()
+            .unwrap_or_else(|| self.code.as_str())
     }
 
     pub fn hint(&self) -> &str {

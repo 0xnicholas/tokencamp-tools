@@ -178,9 +178,6 @@ fn placeholder_commands_exit_2_without_touching_the_filesystem() {
         &["claude", "--no-launch"],
         &["pi", "--no-launch"],
         &["kimi", "--no-launch"],
-        &["login"],
-        &["logout"],
-        &["status"],
         &["doctor"],
         &["uninstall", "--dry-run"],
     ];
@@ -203,7 +200,7 @@ fn json_placeholder_failure_is_exactly_one_object() {
     let env = TestEnv::new();
     let output = env
         .command()
-        .args(["status", "--json"])
+        .args(["doctor", "--json"])
         .output()
         .expect("run tcamp");
 
@@ -212,7 +209,7 @@ fn json_placeholder_failure_is_exactly_one_object() {
         error["message"]
             .as_str()
             .unwrap()
-            .contains("`tcamp status` is not implemented yet")
+            .contains("`tcamp doctor` is not implemented yet")
     );
     assert!(
         error["hint"]
@@ -276,12 +273,7 @@ fn arguments_after_double_dash_are_passed_through() {
 fn placeholder_commands_make_no_network_requests() {
     let env = TestEnv::new();
     let server = MockServer::start(MockResponse::json(200, "{}"));
-    let cases: &[&[&str]] = &[
-        &["login"],
-        &["status", "--json"],
-        &["doctor", "--network"],
-        &["uninstall", "--dry-run"],
-    ];
+    let cases: &[&[&str]] = &[&["doctor", "--network"], &["uninstall", "--dry-run"]];
 
     for args in cases {
         env.command()

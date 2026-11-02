@@ -1,9 +1,13 @@
 #![allow(dead_code)]
 
+#[cfg(unix)]
+pub mod pty;
+
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -59,8 +63,8 @@ impl TestEnv {
         }
     }
 
-    pub fn command(&self) -> assert_cmd::Command {
-        let mut command = assert_cmd::Command::cargo_bin("tcamp").expect("build tcamp binary");
+    pub fn std_command(&self) -> StdCommand {
+        let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("tcamp"));
         command
             .env_clear()
             .env("HOME", &self.home)
@@ -71,6 +75,21 @@ impl TestEnv {
             .env("KIMI_CODE_HOME", &self.kimi_home)
             .env("PATH", &self.bin_dir);
         command
+    }
+
+    pub fn command(&self) -> assert_cmd::Command {
+        assert_cmd::Command::from_std(self.std_command())
+    }
+
+    pub fn credentials_path(&self) -> PathBuf {
+        self.xdg_config.join("tokencamp/credentials.toml")
+    }
+
+    pub fn unused_loopback_url(&self) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve loopback port");
+        let address = listener.local_addr().expect("reserved address");
+        drop(listener);
+        format!("http://{address}")
     }
 
     pub fn fake_harness(&self, name: &str, version: &str) -> FakeHarness {
@@ -182,6 +201,7 @@ pub struct MockResponse {
     pub reason: &'static str,
     pub content_type: &'static str,
     pub body: String,
+    pub headers: Vec<(String, String)>,
 }
 
 impl MockResponse {
@@ -191,6 +211,7 @@ impl MockResponse {
             reason: reason_phrase(status),
             content_type: "application/json",
             body: body.into(),
+            headers: Vec::new(),
         }
     }
 
@@ -200,6 +221,62 @@ impl MockResponse {
             reason: reason_phrase(status),
             content_type: "text/plain",
             body: String::new(),
+            headers: Vec::new(),
+        }
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+}
+
+pub struct StallingServer {
+    addr: SocketAddr,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl StallingServer {
+    pub fn start() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind stalling server");
+        listener
+            .set_nonblocking(true)
+            .expect("make stalling server nonblocking");
+        let addr = listener.local_addr().expect("stalling server address");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let thread_shutdown = Arc::clone(&shutdown);
+        let handle = thread::spawn(move || {
+            let mut held = Vec::new();
+            while !thread_shutdown.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => held.push(stream),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+}
+
+impl Drop for StallingServer {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(self.addr);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
         }
     }
 }
@@ -213,6 +290,11 @@ pub struct MockServer {
 
 impl MockServer {
     pub fn start(response: MockResponse) -> Self {
+        Self::start_sequence(vec![response])
+    }
+
+    pub fn start_sequence(responses: Vec<MockResponse>) -> Self {
+        assert!(!responses.is_empty(), "mock server needs a response");
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock server");
         listener
             .set_nonblocking(true)
@@ -220,14 +302,25 @@ impl MockServer {
         let addr = listener.local_addr().expect("mock server address");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let responses = Arc::new(responses);
+        let next_response = Arc::new(Mutex::new(0usize));
 
         let thread_requests = Arc::clone(&requests);
         let thread_shutdown = Arc::clone(&shutdown);
+        let thread_responses = Arc::clone(&responses);
+        let thread_next = Arc::clone(&next_response);
         let handle = thread::spawn(move || {
             while !thread_shutdown.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        let _ = handle_connection(stream, &response, &thread_requests);
+                        let index = {
+                            let mut next = thread_next.lock().expect("response index lock");
+                            let index = (*next).min(thread_responses.len() - 1);
+                            *next += 1;
+                            index
+                        };
+                        let response = &thread_responses[index];
+                        let _ = handle_connection(stream, response, &thread_requests);
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -316,14 +409,21 @@ fn handle_connection(
             body: String::from_utf8_lossy(&body).into_owned(),
         });
 
-    let response_bytes = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+    let mut response_bytes = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
         response.status,
         response.reason,
         response.content_type,
-        response.body.len(),
-        response.body
+        response.body.len()
     );
+    for (name, value) in &response.headers {
+        response_bytes.push_str(name);
+        response_bytes.push_str(": ");
+        response_bytes.push_str(value);
+        response_bytes.push_str("\r\n");
+    }
+    response_bytes.push_str("\r\n");
+    response_bytes.push_str(&response.body);
     stream.write_all(response_bytes.as_bytes())?;
     stream.flush()
 }
@@ -332,6 +432,7 @@ fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
         201 => "Created",
+        302 => "Found",
         400 => "Bad Request",
         401 => "Unauthorized",
         402 => "Payment Required",
