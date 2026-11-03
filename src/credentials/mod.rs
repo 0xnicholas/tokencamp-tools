@@ -408,9 +408,7 @@ fn run_verification(
 fn auth_error(base_url: &BaseUrl, code: Option<String>, request_id: Option<String>) -> TcampError {
     let hint = match base_url.portal_keys_url() {
         Some(portal) => format!("create or rotate an API key at {portal}"),
-        None => format!(
-            "check the API key for {base_url}; create or rotate it in that tokencamp deployment's Portal"
-        ),
+        None => format!("check the API key for {base_url}"),
     };
     let error = TcampError::authentication(format!("the API key was rejected by {base_url}"), hint);
     let error = match code {
