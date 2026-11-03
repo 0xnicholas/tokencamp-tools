@@ -8,10 +8,13 @@ use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::credentials::{self, KeySource, LoginReport, LogoutReport, StatusReport, Warning};
+use crate::config;
+use crate::credentials::{self, ConnectionContext, KeySource, LoginReport, LogoutReport, Warning};
 use crate::errors::TcampError;
-use crate::harness::{self, Harness};
+use crate::harness::{self, Harness, claude};
+use crate::models;
 use crate::output;
+use crate::terminal;
 
 const QUICKSTART: &str = "Quickstart:
   tcamp login
@@ -230,11 +233,10 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
         },
         Command::Logout(args) => print_logout_report(credentials::logout(args)?, cli.json),
         Command::Status => print_status_report(credentials::status()?, cli.json),
-        Command::Claude(_)
-        | Command::Pi(_)
-        | Command::Kimi(_)
-        | Command::Doctor(_)
-        | Command::Uninstall(_) => Err(TcampError::not_implemented(name)),
+        Command::Claude(args) => configure_claude(args, cli.json),
+        Command::Pi(_) | Command::Kimi(_) | Command::Doctor(_) | Command::Uninstall(_) => {
+            Err(TcampError::not_implemented(name))
+        }
     }
 }
 
@@ -342,8 +344,32 @@ struct SuccessReport {
     ok: bool,
     base_url: Option<String>,
     key: Option<KeyReport>,
-    harnesses: BTreeMap<String, serde_json::Value>,
+    harnesses: BTreeMap<String, HarnessReport>,
     warnings: Vec<WarningReport>,
+}
+
+#[derive(Serialize)]
+struct HarnessReport {
+    configured: bool,
+    target: String,
+    action: &'static str,
+}
+
+#[derive(Serialize)]
+struct ConfigureReport {
+    ok: bool,
+    base_url: Option<String>,
+    key: Option<KeyReport>,
+    harnesses: BTreeMap<String, HarnessReport>,
+    changes: Vec<ChangeReport>,
+    warnings: Vec<WarningReport>,
+}
+
+#[derive(Serialize)]
+struct ChangeReport {
+    path: String,
+    action: &'static str,
+    diff: String,
 }
 
 #[derive(Serialize)]
@@ -368,6 +394,176 @@ fn warning_reports(warnings: &[Warning]) -> Vec<WarningReport> {
             message: warning.message.clone(),
         })
         .collect()
+}
+
+fn key_report(
+    masked: Option<String>,
+    source: Option<KeySource>,
+    verified_at: Option<String>,
+) -> Option<KeyReport> {
+    match (masked, source) {
+        (Some(masked), Some(source)) => Some(KeyReport {
+            masked,
+            source: source.as_str(),
+            verified: verified_at.is_some(),
+            verified_at,
+        }),
+        _ => None,
+    }
+}
+
+fn harness_report(
+    target: &std::path::Path,
+    action: &'static str,
+    configured: bool,
+) -> BTreeMap<String, HarnessReport> {
+    let mut harnesses = BTreeMap::new();
+    harnesses.insert(
+        claude::HARNESS_ID.to_string(),
+        HarnessReport {
+            configured,
+            target: target.display().to_string(),
+            action,
+        },
+    );
+    harnesses
+}
+
+fn print_dry_run(
+    connection: ConnectionContext,
+    target: std::path::PathBuf,
+    action: &'static str,
+    diff: String,
+    warnings: Vec<Warning>,
+    json: bool,
+) -> Result<(), TcampError> {
+    let harnesses = harness_report(&target, action, action != "create");
+
+    if json {
+        return print_json(&ConfigureReport {
+            ok: true,
+            base_url: Some(connection.base_url),
+            key: key_report(
+                connection.masked_key,
+                connection.source,
+                connection.verified_at,
+            ),
+            harnesses,
+            changes: vec![ChangeReport {
+                path: target.display().to_string(),
+                action,
+                diff,
+            }],
+            warnings: warning_reports(&warnings),
+        });
+    }
+
+    if diff.is_empty() {
+        println!("No changes.");
+    } else {
+        print!("{diff}");
+    }
+    eprintln!("no files written");
+    print_warnings(&warnings);
+    Ok(())
+}
+
+fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
+    if !args.no_launch && !args.dry_run {
+        return Err(TcampError::usage(
+            "launching claude is not implemented yet",
+            "run `tcamp claude --no-launch` to configure Claude Code",
+        ));
+    }
+
+    let connection = credentials::resolve_connection(args.base_url.as_deref())?.require_key()?;
+    let target = config::claude_overlay_path()?;
+    let desired = claude::desired_overlay(&connection.base_url, models::DEFAULT_MAIN_MODEL);
+
+    let target_for_inspect = target.clone();
+    let force = args.force;
+    let inspect = move |existing: &config::TargetContents,
+                        entry: Option<&config::manifest::ManifestEntry>|
+          -> Result<config::engine::Inspection, TcampError> {
+        let ownership = existing
+            .contents
+            .as_deref()
+            .map(|contents| claude::overlay_ownership(contents, &target_for_inspect))
+            .transpose()?;
+
+        if ownership == Some(claude::OverlayOwnership::Unowned) && !force {
+            return Err(TcampError::config_conflict(
+                format!(
+                    "the config target {} is not managed by tcamp",
+                    target_for_inspect.display()
+                ),
+                "re-run with `--force` to back up the file and adopt it; tcamp never overwrites an unowned overlay without confirmation",
+            ));
+        }
+
+        let drift = ownership == Some(claude::OverlayOwnership::Owned)
+            && entry
+                .and_then(|entry| entry.last_written_hash.as_deref())
+                .zip(existing.contents.as_deref())
+                .is_some_and(|(previous, contents)| {
+                    previous != config::manifest::hash_bytes(contents)
+                });
+
+        Ok(config::engine::Inspection {
+            drift,
+            adopted: ownership == Some(claude::OverlayOwnership::Unowned) && force,
+            model_ids: models::claude_model_ids(models::DEFAULT_MAIN_MODEL),
+            provider_entry: None,
+        })
+    };
+
+    let prompt = !json && !args.yes && terminal::is_tty();
+    let outcome = config::engine::converge(config::engine::Request {
+        harness: claude::HARNESS_ID,
+        target: target.clone(),
+        desired: desired.into_bytes(),
+        dry_run: args.dry_run,
+        prompt,
+        inspect: &inspect,
+    })?;
+
+    let mut warnings = connection.warnings.clone();
+    warnings.extend(outcome.warnings);
+
+    if args.dry_run {
+        return print_dry_run(
+            connection,
+            target,
+            outcome.action.as_str(),
+            outcome.diff.unwrap_or_default(),
+            warnings,
+            json,
+        );
+    }
+
+    let harnesses = harness_report(&target, outcome.action.as_str(), true);
+
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: Some(connection.base_url),
+            key: key_report(
+                connection.masked_key,
+                connection.source,
+                connection.verified_at,
+            ),
+            harnesses,
+            warnings: warning_reports(&warnings),
+        });
+    }
+
+    if outcome.action == config::engine::Action::None {
+        println!("No changes.");
+    } else {
+        println!("Configured claude: {}", target.display());
+    }
+    print_warnings(&warnings);
+    Ok(())
 }
 
 fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {
@@ -428,7 +624,7 @@ fn print_logout_report(report: LogoutReport, json: bool) -> Result<(), TcampErro
     Ok(())
 }
 
-fn print_status_report(report: StatusReport, json: bool) -> Result<(), TcampError> {
+fn print_status_report(report: ConnectionContext, json: bool) -> Result<(), TcampError> {
     let key = match (&report.masked_key, report.source) {
         (Some(masked), Some(source)) => Some(KeyReport {
             masked: masked.clone(),
@@ -462,7 +658,7 @@ fn print_status_report(report: StatusReport, json: bool) -> Result<(), TcampErro
     Ok(())
 }
 
-fn print_json(report: &SuccessReport) -> Result<(), TcampError> {
+fn print_json(report: &impl Serialize) -> Result<(), TcampError> {
     let payload = serde_json::to_string(report).map_err(|error| {
         TcampError::io(
             format!("failed to encode the result as JSON: {error}"),

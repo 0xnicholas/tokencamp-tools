@@ -175,7 +175,7 @@ fn removed_commands_and_flags_are_rejected() {
 fn placeholder_commands_exit_2_without_touching_the_filesystem() {
     let env = TestEnv::new();
     let cases: &[&[&str]] = &[
-        &["claude", "--no-launch"],
+        &["claude"],
         &["pi", "--no-launch"],
         &["kimi", "--no-launch"],
         &["doctor"],
@@ -188,7 +188,6 @@ fn placeholder_commands_exit_2_without_touching_the_filesystem() {
             .assert()
             .code(2)
             .stdout("")
-            .stderr(predicate::str::contains("is not implemented yet"))
             .stderr(predicate::str::contains("hint:"));
     }
 

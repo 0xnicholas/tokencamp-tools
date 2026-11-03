@@ -9,16 +9,11 @@ use std::path::PathBuf;
 use crate::cli::{LoginArgs, LogoutArgs};
 use crate::errors::TcampError;
 use crate::terminal;
+pub use crate::warnings::Warning;
 
 use base_url::{BaseUrl, DEFAULT_BASE_URL, HttpPolicy};
 use probe::{ProbeResult, VerifyResult};
 use store::{Connection, CredentialStore, now};
-
-#[derive(Debug, Clone)]
-pub struct Warning {
-    pub code: String,
-    pub message: String,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySource {
@@ -57,13 +52,23 @@ pub struct LogoutReport {
 }
 
 #[derive(Debug, Clone)]
-pub struct StatusReport {
+pub struct ConnectionContext {
     pub base_url: String,
     pub masked_key: Option<String>,
     pub source: Option<KeySource>,
     pub verified_at: Option<String>,
     pub credentials_path: PathBuf,
     pub warnings: Vec<Warning>,
+}
+
+impl ConnectionContext {
+    pub fn require_key(self) -> Result<Self, TcampError> {
+        if self.masked_key.is_some() {
+            Ok(self)
+        } else {
+            Err(missing_key_error())
+        }
+    }
 }
 
 enum VerificationFailure {
@@ -227,9 +232,15 @@ pub fn logout(args: LogoutArgs) -> Result<LogoutReport, TcampError> {
     })
 }
 
-pub fn status() -> Result<StatusReport, TcampError> {
+pub fn status() -> Result<ConnectionContext, TcampError> {
+    resolve_connection(None)
+}
+
+pub fn resolve_connection(
+    explicit_base_url: Option<&str>,
+) -> Result<ConnectionContext, TcampError> {
     let store = CredentialStore::load()?;
-    let base_url = resolve_base_url(None, &store)?;
+    let base_url = resolve_base_url(explicit_base_url, &store)?;
     let mut warnings = Vec::new();
     check_transport(&base_url, &mut warnings)?;
 
@@ -245,7 +256,7 @@ pub fn status() -> Result<StatusReport, TcampError> {
         },
     };
 
-    Ok(StatusReport {
+    Ok(ConnectionContext {
         base_url: base_url.as_str().to_string(),
         masked_key,
         source,

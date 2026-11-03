@@ -1,6 +1,9 @@
 pub mod cli;
+pub mod config;
 pub mod credentials;
 pub mod errors;
 pub mod harness;
+pub mod models;
 pub mod output;
 pub mod terminal;
+pub mod warnings;

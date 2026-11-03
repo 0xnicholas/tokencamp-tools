@@ -197,17 +197,9 @@ impl CredentialStore {
 }
 
 pub fn credentials_path() -> Result<PathBuf, TcampError> {
-    let config_home = env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
-        .ok_or_else(|| {
-            TcampError::config_unreadable(
-                "cannot determine where to store credentials",
-                "set HOME or XDG_CONFIG_HOME and try again",
-            )
-        })?;
-    Ok(config_home.join("tokencamp").join("credentials.toml"))
+    Ok(crate::config::paths::config_home()?
+        .join("tokencamp")
+        .join("credentials.toml"))
 }
 
 pub fn now() -> String {

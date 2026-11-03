@@ -36,6 +36,16 @@ pub fn confirm(prompt: &str) -> io::Result<Option<bool>> {
     Ok(answer.map(|answer| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")))
 }
 
+pub fn confirm_default_yes(prompt: &str) -> io::Result<Option<bool>> {
+    {
+        let mut stderr = io::stderr().lock();
+        write!(stderr, "{prompt}")?;
+        stderr.flush()?;
+    }
+    let answer = read_line()?;
+    Ok(answer.map(|answer| !matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no")))
+}
+
 fn read_line() -> io::Result<Option<String>> {
     let mut line = String::new();
     let read = io::stdin().read_line(&mut line)?;

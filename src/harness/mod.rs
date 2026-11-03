@@ -1,3 +1,5 @@
+pub mod claude;
+
 use std::env;
 use std::path::Path;
 
