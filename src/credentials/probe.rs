@@ -1,8 +1,7 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::Response;
 use reqwest::header::ACCEPT;
-use reqwest::redirect::Policy;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -42,7 +41,7 @@ pub enum VerifyResult {
 }
 
 pub fn probe(base: &BaseUrl, api_key: &str) -> ProbeResult {
-    let client = match client(PROBE_TIMEOUT) {
+    let client = match crate::http::blocking_client(PROBE_TIMEOUT) {
         Ok(client) => client,
         Err(detail) => {
             return ProbeResult::Indeterminate {
@@ -103,7 +102,7 @@ pub fn probe(base: &BaseUrl, api_key: &str) -> ProbeResult {
 }
 
 pub fn verify_chat(base: &BaseUrl, api_key: &str) -> VerifyResult {
-    let client = match client(VERIFY_TIMEOUT) {
+    let client = match crate::http::blocking_client(VERIFY_TIMEOUT) {
         Ok(client) => client,
         Err(detail) => {
             return VerifyResult::Indeterminate {
@@ -169,15 +168,6 @@ pub fn warning_for_status(status: u16, code: String, base: &BaseUrl) -> Warning 
         _ => format!("the API key was accepted but the request failed with HTTP {status}"),
     };
     Warning { code, message }
-}
-
-fn client(timeout: Duration) -> Result<Client, String> {
-    Client::builder()
-        .timeout(timeout)
-        .redirect(Policy::none())
-        .user_agent(concat!("tcamp/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|_| "could not initialize the HTTP client".to_string())
 }
 
 fn transport_detail(base: &BaseUrl, error: &reqwest::Error) -> String {

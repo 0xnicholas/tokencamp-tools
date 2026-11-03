@@ -50,6 +50,7 @@ pub struct Outcome {
     pub backup: Option<PathBuf>,
     pub diff: Option<String>,
     pub warnings: Vec<Warning>,
+    pub declined: bool,
 }
 
 pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
@@ -73,6 +74,7 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
             backup: None,
             diff: Some(diff),
             warnings: Vec::new(),
+            declined: false,
         });
     }
 
@@ -87,6 +89,7 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
                     backup: None,
                     diff: None,
                     warnings: Vec::new(),
+                    declined: true,
                 });
             }
             Err(error) => {
@@ -191,6 +194,7 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
         backup,
         diff: None,
         warnings,
+        declined: false,
     })
 }
 

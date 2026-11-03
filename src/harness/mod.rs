@@ -1,7 +1,6 @@
 pub mod claude;
-
-use std::env;
-use std::path::Path;
+pub mod launch;
+pub mod preflight;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Harness {
@@ -33,27 +32,6 @@ impl Harness {
 pub fn detect() -> Vec<Harness> {
     Harness::ALL
         .into_iter()
-        .filter(|harness| binary_on_path(harness.binary()))
+        .filter(|harness| launch::binary_path(*harness).is_some())
         .collect()
-}
-
-fn binary_on_path(name: &str) -> bool {
-    let Some(path) = env::var_os("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|dir| is_executable(&dir.join(name)))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
 }

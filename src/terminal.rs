@@ -9,6 +9,10 @@ pub fn is_tty() -> bool {
     io::stdin().is_terminal()
 }
 
+pub fn is_interactive() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
 pub fn prompt_hidden(prompt: &str) -> io::Result<Option<String>> {
     let echo = EchoGuard::disable();
     {

@@ -469,16 +469,83 @@ fn print_dry_run(
 }
 
 fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
+    let mut connection = credentials::resolve_connection(args.base_url.as_deref())?;
+    let selection = models::resolve_claude_model(args.model.as_deref())?;
     if !args.no_launch && !args.dry_run {
-        return Err(TcampError::usage(
-            "launching claude is not implemented yet",
-            "run `tcamp claude --no-launch` to configure Claude Code",
-        ));
+        connection = credentials::ensure_launch_key(connection, terminal::is_interactive())?;
     }
-
-    let connection = credentials::resolve_connection(args.base_url.as_deref())?.require_key()?;
+    let connection = connection.require_key()?;
     let target = config::claude_overlay_path()?;
     let desired = claude::desired_overlay(&connection.base_url, models::DEFAULT_MAIN_MODEL);
+    let model_ids = models::claude_model_ids(&selection.main);
+
+    let mut warnings = connection.warnings.clone();
+    if !args.dry_run && !args.no_launch {
+        let _ = harness::launch::require_binary(Harness::Claude)?;
+    }
+
+    let shadowing = claude::inspect_shadowing();
+    if args.dry_run || args.no_launch {
+        for conflict in &shadowing.conflicts {
+            warnings.push(Warning::new("shadowing_conflict", conflict.message()));
+        }
+        for problem in &shadowing.unreadable {
+            warnings.push(Warning::new("shadowing_unreadable", problem.message()));
+        }
+        warnings.extend(shadowing.warnings);
+    } else {
+        if !shadowing.conflicts.is_empty() {
+            let message = shadowing
+                .conflicts
+                .iter()
+                .map(|conflict| conflict.message())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(TcampError::config_conflict(
+                message,
+                "remove the setting from the Claude settings file, or use a separate Claude profile; `--force` does not bypass shadowing",
+            ));
+        }
+        if !shadowing.unreadable.is_empty() {
+            let message = shadowing
+                .unreadable
+                .iter()
+                .map(|problem| problem.message())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(TcampError::config_unreadable(
+                message,
+                "make the Claude settings readable or remove them and try again; tcamp cannot rule out credential shadowing",
+            ));
+        }
+        warnings.extend(shadowing.warnings);
+    }
+
+    if !args.dry_run {
+        let existing = config::read_target(&target)?;
+        if let Some(contents) = existing.contents.as_deref() {
+            let ownership = claude::overlay_ownership(contents, &target)?;
+            if ownership == claude::OverlayOwnership::Unowned && !args.force {
+                return Err(claude::unowned_conflict(&target));
+            }
+        }
+        config::manifest::Manifest::load()?;
+
+        let api_key = credentials::require_launch_key(&connection.base_url)?;
+        let model_check =
+            harness::preflight::check_models(&connection.base_url, &api_key, &model_ids);
+        if !model_check.missing.is_empty() {
+            return Err(TcampError::usage(
+                format!(
+                    "the model(s) {} were not found at {}",
+                    model_check.missing.join(", "),
+                    connection.base_url
+                ),
+                "pass a different main model with `--model`, or upgrade tcamp when the curated catalog changes",
+            ));
+        }
+        warnings.extend(model_check.warnings);
+    }
 
     let target_for_inspect = target.clone();
     let force = args.force;
@@ -492,13 +559,7 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
             .transpose()?;
 
         if ownership == Some(claude::OverlayOwnership::Unowned) && !force {
-            return Err(TcampError::config_conflict(
-                format!(
-                    "the config target {} is not managed by tcamp",
-                    target_for_inspect.display()
-                ),
-                "re-run with `--force` to back up the file and adopt it; tcamp never overwrites an unowned overlay without confirmation",
-            ));
+            return Err(claude::unowned_conflict(&target_for_inspect));
         }
 
         let drift = ownership == Some(claude::OverlayOwnership::Owned)
@@ -527,7 +588,6 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
         inspect: &inspect,
     })?;
 
-    let mut warnings = connection.warnings.clone();
     warnings.extend(outcome.warnings);
 
     if args.dry_run {
@@ -557,13 +617,42 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
         });
     }
 
-    if outcome.action == config::engine::Action::None {
-        println!("No changes.");
-    } else {
-        println!("Configured claude: {}", target.display());
-    }
     print_warnings(&warnings);
-    Ok(())
+
+    if outcome.declined {
+        println!("No changes.");
+        return Ok(());
+    }
+
+    if args.no_launch {
+        if outcome.action == config::engine::Action::None {
+            println!("No changes.");
+        } else {
+            println!("Configured claude: {}", target.display());
+        }
+        return Ok(());
+    }
+
+    if outcome.action != config::engine::Action::None {
+        eprintln!("Configured claude: {}", target.display());
+    }
+    launch_claude(&args, &target, &connection.base_url, &selection)
+}
+
+fn launch_claude(
+    args: &HarnessArgs,
+    target: &std::path::Path,
+    base_url: &str,
+    selection: &models::ClaudeModelSelection,
+) -> Result<(), TcampError> {
+    let binary = harness::launch::require_binary(Harness::Claude)?;
+    let api_key = credentials::require_launch_key(base_url)?;
+    let argv = claude::launch_args(target, &args.harness_args, selection);
+    let environment = claude::launch_environment(&api_key, selection);
+
+    eprintln!("{}", claude::MESSAGES_UNVERIFIED_HINT);
+    eprintln!("Launching claude ...");
+    harness::launch::exec(Harness::Claude, &binary, &argv, &environment)
 }
 
 fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {

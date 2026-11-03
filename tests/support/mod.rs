@@ -66,6 +66,7 @@ impl TestEnv {
     pub fn std_command(&self) -> StdCommand {
         let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("tcamp"));
         command
+            .current_dir(&self.root)
             .env_clear()
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.xdg_config)
@@ -73,6 +74,10 @@ impl TestEnv {
             .env("CLAUDE_CONFIG_DIR", &self.claude_config)
             .env("PI_CODING_AGENT_DIR", &self.pi_agent)
             .env("KIMI_CODE_HOME", &self.kimi_home)
+            .env(
+                "TCAMP_TEST_CLAUDE_MANAGED_SETTINGS",
+                self.root.join("missing-managed-settings.json"),
+            )
             .env("PATH", &self.bin_dir);
         command
     }
@@ -104,6 +109,50 @@ impl TestEnv {
     ) -> FakeHarness {
         FakeHarness::new(&self.bin_dir, name, version, exit_code)
     }
+
+    pub fn login(&self, base_url: &str, key: &str) {
+        self.command()
+            .args([
+                "login",
+                "--key-stdin",
+                "--no-verify",
+                "--base-url",
+                base_url,
+            ])
+            .write_stdin(key)
+            .assert()
+            .success();
+    }
+
+    pub fn claude_overlay_path(&self) -> PathBuf {
+        self.xdg_config
+            .join("tokencamp/harnesses/claude/settings.json")
+    }
+}
+
+pub fn model_routes() -> Vec<(&'static str, MockResponse)> {
+    vec![
+        (
+            "/v1/models/zhipu/glm-5.3",
+            MockResponse::json(200, r#"{"id":"model"}"#),
+        ),
+        (
+            "/v1/models/deepseek/deepseek-v4-pro",
+            MockResponse::json(200, r#"{"id":"model"}"#),
+        ),
+        (
+            "/v1/models/zhipu/glm-5.3-flash",
+            MockResponse::json(200, r#"{"id":"model"}"#),
+        ),
+        (
+            "/v1/models/kimi/kimi-k2.7-code",
+            MockResponse::json(200, r#"{"id":"model"}"#),
+        ),
+    ]
+}
+
+pub fn model_server() -> MockServer {
+    MockServer::start_routes(model_routes())
 }
 
 pub struct FakeHarness {
@@ -144,6 +193,10 @@ impl FakeHarness {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn ran(&self) -> bool {
+        self.args_log.exists()
     }
 
     pub fn args(&self) -> Vec<String> {
@@ -288,6 +341,32 @@ pub struct MockServer {
     handle: Option<JoinHandle<()>>,
 }
 
+enum ResponsePlan {
+    Sequence {
+        responses: Vec<MockResponse>,
+        next: Mutex<usize>,
+    },
+    Routed(Vec<(&'static str, MockResponse)>),
+}
+
+impl ResponsePlan {
+    fn response_for(&self, path: &str) -> MockResponse {
+        match self {
+            Self::Sequence { responses, next } => {
+                let mut next = next.lock().expect("response index lock");
+                let index = (*next).min(responses.len() - 1);
+                *next += 1;
+                responses[index].clone()
+            }
+            Self::Routed(routes) => routes
+                .iter()
+                .find(|(route, _)| *route == path)
+                .map(|(_, response)| response.clone())
+                .unwrap_or_else(|| MockResponse::json(404, r#"{"error":{"code":"not_found"}}"#)),
+        }
+    }
+}
+
 impl MockServer {
     pub fn start(response: MockResponse) -> Self {
         Self::start_sequence(vec![response])
@@ -295,6 +374,18 @@ impl MockServer {
 
     pub fn start_sequence(responses: Vec<MockResponse>) -> Self {
         assert!(!responses.is_empty(), "mock server needs a response");
+        Self::start_plan(ResponsePlan::Sequence {
+            responses,
+            next: Mutex::new(0),
+        })
+    }
+
+    pub fn start_routes(routes: Vec<(&'static str, MockResponse)>) -> Self {
+        assert!(!routes.is_empty(), "mock server needs a route");
+        Self::start_plan(ResponsePlan::Routed(routes))
+    }
+
+    fn start_plan(plan: ResponsePlan) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock server");
         listener
             .set_nonblocking(true)
@@ -302,25 +393,16 @@ impl MockServer {
         let addr = listener.local_addr().expect("mock server address");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
-        let responses = Arc::new(responses);
-        let next_response = Arc::new(Mutex::new(0usize));
+        let plan = Arc::new(plan);
 
         let thread_requests = Arc::clone(&requests);
         let thread_shutdown = Arc::clone(&shutdown);
-        let thread_responses = Arc::clone(&responses);
-        let thread_next = Arc::clone(&next_response);
+        let thread_plan = Arc::clone(&plan);
         let handle = thread::spawn(move || {
             while !thread_shutdown.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        let index = {
-                            let mut next = thread_next.lock().expect("response index lock");
-                            let index = (*next).min(thread_responses.len() - 1);
-                            *next += 1;
-                            index
-                        };
-                        let response = &thread_responses[index];
-                        let _ = handle_connection(stream, response, &thread_requests);
+                        let _ = handle_connection(stream, &thread_plan, &thread_requests);
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -363,7 +445,7 @@ impl Drop for MockServer {
 
 fn handle_connection(
     mut stream: TcpStream,
-    response: &MockResponse,
+    plan: &ResponsePlan,
     requests: &Mutex<Vec<RecordedRequest>>,
 ) -> io::Result<()> {
     stream.set_nonblocking(false)?;
@@ -399,6 +481,7 @@ fn handle_connection(
         reader.read_exact(&mut body)?;
     }
 
+    let response = plan.response_for(&path);
     requests
         .lock()
         .expect("requests lock")

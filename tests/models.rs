@@ -9,17 +9,7 @@ const KEY: &str = "sk-0123456789abcdef0123456789abcdef";
 const BASE_URL: &str = "https://tokencamp.example";
 
 fn configure(env: &TestEnv) {
-    env.command()
-        .args([
-            "login",
-            "--key-stdin",
-            "--no-verify",
-            "--base-url",
-            BASE_URL,
-        ])
-        .write_stdin(KEY)
-        .assert()
-        .success();
+    env.login(BASE_URL, KEY);
     env.command()
         .args(["claude", "--no-launch"])
         .assert()

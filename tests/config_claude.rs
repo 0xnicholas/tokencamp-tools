@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
 
-use support::TestEnv;
+use support::{MockResponse, MockServer, TestEnv, model_server};
 
 const KEY: &str = "sk-0123456789abcdef0123456789abcdef";
 const BASE_URL: &str = "https://tokencamp.example";
@@ -33,17 +33,7 @@ const EXPECTED_OVERLAY: &str = r#"{
 "#;
 
 fn login(env: &TestEnv, base_url: &str) {
-    env.command()
-        .args([
-            "login",
-            "--key-stdin",
-            "--no-verify",
-            "--base-url",
-            base_url,
-        ])
-        .write_stdin(KEY)
-        .assert()
-        .success();
+    env.login(base_url, KEY);
 }
 
 fn run(env: &TestEnv, args: &[&str]) -> Output {
@@ -59,8 +49,318 @@ fn stderr(output: &Output) -> String {
 }
 
 fn overlay_path(env: &TestEnv) -> PathBuf {
-    env.xdg_config
-        .join("tokencamp/harnesses/claude/settings.json")
+    env.claude_overlay_path()
+}
+
+fn overlay_value(env: &TestEnv) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(overlay_path(env)).expect("read overlay"))
+        .expect("overlay is JSON")
+}
+
+#[test]
+fn launch_execs_claude_with_the_overlay_and_injected_credentials() {
+    let env = TestEnv::new();
+    let server = MockServer::start_routes(vec![
+        ("/v1/models/zhipu/glm-5.3", MockResponse::json(200, "{}")),
+        (
+            "/v1/models/deepseek/deepseek-v4-pro",
+            MockResponse::json(200, "{}"),
+        ),
+        (
+            "/v1/models/zhipu/glm-5.3-flash",
+            MockResponse::json(200, "{}"),
+        ),
+    ]);
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+
+    let output = run(&env, &["claude"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        claude.args(),
+        vec![
+            "--settings".to_string(),
+            overlay_path(&env).display().to_string()
+        ]
+    );
+    assert_eq!(claude.env_value("TOKENCAMP_API_KEY").as_deref(), Some(KEY));
+    assert_eq!(
+        claude.env_value("ANTHROPIC_AUTH_TOKEN").as_deref(),
+        Some(KEY)
+    );
+    assert_eq!(claude.env_value("ANTHROPIC_API_KEY").as_deref(), Some(""));
+
+    let combined = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(!combined.contains(KEY), "output leaked the key: {combined}");
+    assert!(
+        stderr(&output).contains("Launching claude ..."),
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("/v1/messages capability unverified"),
+        "stderr: {}",
+        stderr(&output)
+    );
+
+    let overlay = fs::read_to_string(overlay_path(&env)).expect("read overlay");
+    assert!(!overlay.contains(KEY));
+    assert!(!overlay.contains("ANTHROPIC_AUTH_TOKEN"));
+    assert!(
+        !env.claude_config.join("settings.json").exists(),
+        "the user's Claude settings must not be touched"
+    );
+}
+
+#[test]
+fn launch_requires_the_binary_without_no_launch() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+
+    let output = run(&env, &["claude"]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
+    let message = stderr(&output);
+    assert!(message.contains("harness_not_found"), "stderr: {message}");
+    assert!(message.contains("https://"), "stderr: {message}");
+    assert!(
+        server.requests().is_empty(),
+        "the binary check must run before the model checks"
+    );
+    assert!(!overlay_path(&env).exists());
+}
+
+#[test]
+fn no_launch_writes_the_config_even_when_the_binary_is_missing() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+
+    let output = run(&env, &["claude", "--no-launch"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(overlay_path(&env).exists());
+}
+
+#[test]
+fn arguments_after_double_dash_reach_the_harness_verbatim() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness_with_exit_code("claude", "2.1.316", 7);
+
+    let output = run(&env, &["claude", "--", "--foo", "bar baz"]);
+
+    assert_eq!(output.status.code(), Some(7), "stderr: {}", stderr(&output));
+    assert_eq!(
+        claude.args(),
+        vec![
+            "--settings".to_string(),
+            overlay_path(&env).display().to_string(),
+            "--foo".to_string(),
+            "bar baz".to_string()
+        ]
+    );
+}
+
+#[test]
+fn a_launch_reports_configured_once_then_stays_quiet() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    env.fake_harness("claude", "2.1.316");
+
+    let first = run(&env, &["claude"]);
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    assert!(
+        stderr(&first).contains(&format!(
+            "Configured claude: {}",
+            overlay_path(&env).display()
+        )),
+        "stderr: {}",
+        stderr(&first)
+    );
+
+    let second = run(&env, &["claude"]);
+    assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
+    assert!(
+        !stderr(&second).contains("Configured claude:"),
+        "stderr: {}",
+        stderr(&second)
+    );
+    assert!(
+        stderr(&second).contains("Launching claude ..."),
+        "stderr: {}",
+        stderr(&second)
+    );
+}
+
+#[test]
+fn model_override_changes_the_launch_but_not_the_overlay() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+
+    let output = run(&env, &["claude", "--model", "kimi/kimi-k2.7-code"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        claude.env_value("ANTHROPIC_MODEL").as_deref(),
+        Some("kimi/kimi-k2.7-code")
+    );
+    assert_eq!(
+        claude
+            .env_value("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .as_deref(),
+        Some("262144")
+    );
+    assert_eq!(
+        claude.args(),
+        vec![
+            "--settings".to_string(),
+            overlay_path(&env).display().to_string(),
+            "--model".to_string(),
+            "kimi/kimi-k2.7-code".to_string()
+        ]
+    );
+    let overlay = overlay_value(&env);
+    let values = overlay["env"].as_object().expect("env object");
+    assert_eq!(values["ANTHROPIC_MODEL"], "zhipu/glm-5.3");
+    assert_eq!(
+        values["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "deepseek/deepseek-v4-pro"
+    );
+    assert_eq!(values["ANTHROPIC_DEFAULT_SONNET_MODEL"], "zhipu/glm-5.3");
+    assert_eq!(
+        values["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        "zhipu/glm-5.3-flash"
+    );
+    assert_eq!(
+        values["ANTHROPIC_DEFAULT_FABLE_MODEL"],
+        "deepseek/deepseek-v4-pro"
+    );
+}
+
+#[test]
+fn invalid_model_values_exit_2_and_list_the_available_ids() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+
+    for model in [
+        "",
+        "auto",
+        "tokencamp/auto",
+        "@preset/fast",
+        "~family-latest",
+        "not-a-model",
+    ] {
+        let output = run(&env, &["claude", "--model", model]);
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "model {model:?}: stderr: {}",
+            stderr(&output)
+        );
+        let message = stderr(&output);
+        assert!(message.contains("[usage]"), "model {model:?}: {message}");
+        for available in [
+            "zhipu/glm-5.3",
+            "deepseek/deepseek-v4-pro",
+            "zhipu/glm-5.3-flash",
+            "kimi/kimi-k2.7-code",
+        ] {
+            assert!(
+                message.contains(available),
+                "model {model:?} must list {available}: {message}"
+            );
+        }
+    }
+
+    assert!(!claude.ran());
+    assert!(!overlay_path(&env).exists());
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn tokencamp_model_overrides_the_launch() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+
+    let output = env
+        .command()
+        .args(["claude"])
+        .env("TOKENCAMP_MODEL", "kimi/kimi-k2.7-code")
+        .output()
+        .expect("run tcamp");
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        claude.env_value("ANTHROPIC_MODEL").as_deref(),
+        Some("kimi/kimi-k2.7-code")
+    );
+    assert_eq!(
+        overlay_value(&env)["env"]["ANTHROPIC_MODEL"],
+        "zhipu/glm-5.3"
+    );
+}
+
+#[test]
+fn the_model_flag_wins_over_the_environment_and_an_empty_environment_value_is_ignored() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+
+    let output = env
+        .command()
+        .args(["claude", "--model", "kimi/kimi-k2.7-code"])
+        .env("TOKENCAMP_MODEL", "zhipu/glm-5.3-flash")
+        .output()
+        .expect("run tcamp");
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        claude.env_value("ANTHROPIC_MODEL").as_deref(),
+        Some("kimi/kimi-k2.7-code")
+    );
+
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let claude = env.fake_harness("claude", "2.1.316");
+    let output = env
+        .command()
+        .args(["claude"])
+        .env("TOKENCAMP_MODEL", "")
+        .output()
+        .expect("run tcamp");
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(claude.env_value("ANTHROPIC_MODEL"), None);
+}
+
+#[test]
+fn no_launch_does_not_write_the_model_override() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+
+    let output = run(
+        &env,
+        &["claude", "--no-launch", "--model", "kimi/kimi-k2.7-code"],
+    );
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        overlay_value(&env)["env"]["ANTHROPIC_MODEL"],
+        "zhipu/glm-5.3"
+    );
 }
 
 #[test]

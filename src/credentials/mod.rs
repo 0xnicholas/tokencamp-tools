@@ -82,6 +82,57 @@ enum VerificationFailure {
     },
 }
 
+pub fn ensure_launch_key(
+    mut connection: ConnectionContext,
+    interactive: bool,
+) -> Result<ConnectionContext, TcampError> {
+    if connection.masked_key.is_some() {
+        return Ok(connection);
+    }
+    if !interactive {
+        return Err(missing_key_error());
+    }
+
+    let api_key = prompt_hidden_key()?;
+    let base_url = BaseUrl::parse(&connection.base_url)?;
+    let mut warnings = connection.warnings.clone();
+
+    let verified_at = match run_verification(&base_url, &api_key, false) {
+        Ok((timestamp, probe_warnings)) => {
+            warnings.extend(probe_warnings);
+            Some(timestamp)
+        }
+        Err(VerificationFailure::Rejected { code, request_id }) => {
+            return Err(auth_error(&base_url, code, request_id));
+        }
+        Err(VerificationFailure::Indeterminate { detail, request_id }) => {
+            return Err(indeterminate_error(detail, request_id));
+        }
+    };
+
+    if !key_has_expected_shape(&api_key) {
+        warnings.push(key_format_warning());
+    }
+
+    let mut store = CredentialStore::load()?;
+    store.connections.insert(
+        connection.base_url.clone(),
+        Connection {
+            api_key: api_key.clone(),
+            created_at: now(),
+            verified_at: verified_at.clone(),
+        },
+    );
+    store.active = Some(connection.base_url.clone());
+    store.save()?;
+
+    connection.masked_key = Some(mask_key(&api_key));
+    connection.source = Some(KeySource::Tty);
+    connection.verified_at = verified_at;
+    connection.warnings = warnings;
+    Ok(connection)
+}
+
 pub fn login(args: LoginArgs, json: bool) -> Result<Option<LoginReport>, TcampError> {
     let mut store = CredentialStore::load()?;
     let base_url = resolve_base_url(args.base_url.as_deref(), &store)?;
@@ -148,12 +199,7 @@ pub fn login(args: LoginArgs, json: bool) -> Result<Option<LoginReport>, TcampEr
     }
 
     if !key_has_expected_shape(&api_key) {
-        warnings.push(Warning {
-            code: "key_format".to_string(),
-            message:
-                "the API key does not look like `sk-` followed by 32 characters; it was saved anyway"
-                    .to_string(),
-        });
+        warnings.push(key_format_warning());
     }
     if existed {
         warnings.push(Warning {
@@ -234,6 +280,20 @@ pub fn logout(args: LogoutArgs) -> Result<LogoutReport, TcampError> {
 
 pub fn status() -> Result<ConnectionContext, TcampError> {
     resolve_connection(None)
+}
+
+pub fn require_launch_key(base_url: &str) -> Result<String, TcampError> {
+    launch_key(base_url)?.ok_or_else(missing_key_error)
+}
+
+pub fn launch_key(base_url: &str) -> Result<Option<String>, TcampError> {
+    if let Some(key) = env_key() {
+        return Ok(Some(key));
+    }
+    let store = CredentialStore::load()?;
+    Ok(store
+        .connection(base_url)
+        .map(|connection| connection.api_key.clone()))
 }
 
 pub fn resolve_connection(
@@ -331,6 +391,15 @@ fn missing_key_error() -> TcampError {
 
 fn key_has_expected_shape(key: &str) -> bool {
     key.starts_with("sk-") && key.chars().count() == 35
+}
+
+fn key_format_warning() -> Warning {
+    Warning {
+        code: "key_format".to_string(),
+        message:
+            "the API key does not look like `sk-` followed by 32 characters; it was saved anyway"
+                .to_string(),
+    }
 }
 
 pub fn mask_key(key: &str) -> String {
