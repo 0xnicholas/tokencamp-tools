@@ -83,7 +83,7 @@ fn mask_secret_value(line: &str, key: &str) -> String {
         return line.to_string();
     };
     let value = &rest[..close];
-    if value.is_empty() {
+    if value.is_empty() || is_env_reference(value) {
         return line.to_string();
     }
     format!(
@@ -92,6 +92,23 @@ fn mask_secret_value(line: &str, key: &str) -> String {
         mask_secret(value),
         &line[value_start + close..]
     )
+}
+
+fn is_env_reference(value: &str) -> bool {
+    let value = value.trim();
+    let Some(rest) = value.strip_prefix('$') else {
+        return false;
+    };
+    let name = rest
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(rest);
+    name.chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn mask_secret(value: &str) -> String {

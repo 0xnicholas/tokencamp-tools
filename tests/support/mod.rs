@@ -128,6 +128,18 @@ impl TestEnv {
         self.xdg_config
             .join("tokencamp/harnesses/claude/settings.json")
     }
+
+    pub fn pi_models_path(&self) -> PathBuf {
+        self.pi_agent.join("models.json")
+    }
+
+    pub fn pi_settings_path(&self) -> PathBuf {
+        self.pi_agent.join("settings.json")
+    }
+
+    pub fn pi_auth_path(&self) -> PathBuf {
+        self.pi_agent.join("auth.json")
+    }
 }
 
 pub fn model_routes() -> Vec<(&'static str, MockResponse)> {

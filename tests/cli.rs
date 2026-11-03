@@ -258,14 +258,26 @@ fn json_with_launch_is_a_usage_error_pointing_at_no_launch() {
 #[test]
 fn arguments_after_double_dash_are_passed_through() {
     let env = TestEnv::new();
+    let server = support::model_server();
+    env.login(&server.url(""), "sk-0123456789abcdef0123456789abcdef");
+    let pi = env.fake_harness("pi", "1.4.0");
 
     env.command()
-        .args(["pi", "--no-launch", "--", "--nope"])
+        .args(["pi", "--", "--nope"])
         .assert()
-        .code(2)
-        .stdout("")
-        .stderr(predicate::str::contains("is not implemented yet"))
+        .success()
         .stderr(predicate::str::contains("unexpected argument").not());
+
+    assert_eq!(
+        pi.args(),
+        vec![
+            "--provider".to_string(),
+            "tokencamp".to_string(),
+            "--model".to_string(),
+            "zhipu/glm-5.3".to_string(),
+            "--nope".to_string(),
+        ]
+    );
 }
 
 #[test]

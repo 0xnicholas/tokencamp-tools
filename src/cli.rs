@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::config;
 use crate::credentials::{self, ConnectionContext, KeySource, LoginReport, LogoutReport, Warning};
 use crate::errors::TcampError;
-use crate::harness::{self, Harness, claude};
+use crate::harness::{self, Harness, claude, pi};
 use crate::models;
 use crate::output;
 use crate::terminal;
@@ -234,7 +234,8 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
         Command::Logout(args) => print_logout_report(credentials::logout(args)?, cli.json),
         Command::Status => print_status_report(credentials::status()?, cli.json),
         Command::Claude(args) => configure_claude(args, cli.json),
-        Command::Pi(_) | Command::Kimi(_) | Command::Doctor(_) | Command::Uninstall(_) => {
+        Command::Pi(args) => configure_pi(args, cli.json),
+        Command::Kimi(_) | Command::Doctor(_) | Command::Uninstall(_) => {
             Err(TcampError::not_implemented(name))
         }
     }
@@ -413,13 +414,14 @@ fn key_report(
 }
 
 fn harness_report(
+    harness: &str,
     target: &std::path::Path,
     action: &'static str,
     configured: bool,
 ) -> BTreeMap<String, HarnessReport> {
     let mut harnesses = BTreeMap::new();
     harnesses.insert(
-        claude::HARNESS_ID.to_string(),
+        harness.to_string(),
         HarnessReport {
             configured,
             target: target.display().to_string(),
@@ -431,13 +433,14 @@ fn harness_report(
 
 fn print_dry_run(
     connection: ConnectionContext,
+    harness: &str,
     target: std::path::PathBuf,
     action: &'static str,
-    diff: String,
+    changes: Vec<ChangeReport>,
     warnings: Vec<Warning>,
     json: bool,
 ) -> Result<(), TcampError> {
-    let harnesses = harness_report(&target, action, action != "create");
+    let harnesses = harness_report(harness, &target, action, action != "create");
 
     if json {
         return print_json(&ConfigureReport {
@@ -449,15 +452,15 @@ fn print_dry_run(
                 connection.verified_at,
             ),
             harnesses,
-            changes: vec![ChangeReport {
-                path: target.display().to_string(),
-                action,
-                diff,
-            }],
+            changes,
             warnings: warning_reports(&warnings),
         });
     }
 
+    let diff = changes
+        .iter()
+        .map(|change| change.diff.as_str())
+        .collect::<String>();
     if diff.is_empty() {
         println!("No changes.");
     } else {
@@ -476,7 +479,8 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     }
     let connection = connection.require_key()?;
     let target = config::claude_overlay_path()?;
-    let desired = claude::desired_overlay(&connection.base_url, models::DEFAULT_MAIN_MODEL);
+    let desired_text = claude::desired_overlay(&connection.base_url, models::DEFAULT_MAIN_MODEL);
+    let desired = move |_existing: &config::TargetContents| Ok(desired_text.clone().into_bytes());
     let model_ids = models::claude_model_ids(&selection.main);
 
     let mut warnings = connection.warnings.clone();
@@ -575,6 +579,7 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
             adopted: ownership == Some(claude::OverlayOwnership::Unowned) && force,
             model_ids: models::claude_model_ids(models::DEFAULT_MAIN_MODEL),
             provider_entry: None,
+            defaults: std::collections::BTreeMap::new(),
         })
     };
 
@@ -582,7 +587,7 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     let outcome = config::engine::converge(config::engine::Request {
         harness: claude::HARNESS_ID,
         target: target.clone(),
-        desired: desired.into_bytes(),
+        desired: &desired,
         dry_run: args.dry_run,
         prompt,
         inspect: &inspect,
@@ -591,17 +596,23 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     warnings.extend(outcome.warnings);
 
     if args.dry_run {
+        let action = outcome.action.as_str();
         return print_dry_run(
             connection,
-            target,
-            outcome.action.as_str(),
-            outcome.diff.unwrap_or_default(),
+            claude::HARNESS_ID,
+            target.clone(),
+            action,
+            vec![ChangeReport {
+                path: target.display().to_string(),
+                action,
+                diff: outcome.diff.unwrap_or_default(),
+            }],
             warnings,
             json,
         );
     }
 
-    let harnesses = harness_report(&target, outcome.action.as_str(), true);
+    let harnesses = harness_report(claude::HARNESS_ID, &target, outcome.action.as_str(), true);
 
     if json {
         return print_json(&SuccessReport {
@@ -653,6 +664,213 @@ fn launch_claude(
     eprintln!("{}", claude::MESSAGES_UNVERIFIED_HINT);
     eprintln!("Launching claude ...");
     harness::launch::exec(Harness::Claude, &binary, &argv, &environment)
+}
+
+fn configure_pi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
+    let mut connection = credentials::resolve_connection(args.base_url.as_deref())?;
+    let selection = pi::resolve_model(args.model.as_deref())?;
+    if !args.no_launch && !args.dry_run {
+        connection = credentials::ensure_launch_key(connection, terminal::is_interactive())?;
+    }
+    let connection = connection.require_key()?;
+    let paths = pi::paths()?;
+    let model_ids = vec![selection.model.clone()];
+
+    let mut warnings = connection.warnings.clone();
+    if !args.dry_run && !args.no_launch {
+        let _ = harness::launch::require_binary(Harness::Pi)?;
+    }
+
+    let shadowing = pi::inspect_shadowing()?;
+    if args.dry_run || args.no_launch {
+        warnings.extend(shadowing.warnings());
+    } else if !shadowing.is_empty() {
+        return Err(shadowing.error());
+    }
+
+    let settings_target = paths.settings.clone();
+    let settings_existing = config::read_target(&settings_target)?;
+    let settings_merge =
+        pi::merge_settings(settings_existing.contents.as_deref(), &settings_target)?;
+    let settings_written = settings_merge.contents.is_some();
+
+    if !args.dry_run {
+        let existing = config::read_target(&paths.models)?;
+        let manifest = config::manifest::Manifest::load()?;
+        let key = existing.resolved.path.display().to_string();
+        pi::inspect_models(
+            existing.contents.as_deref(),
+            &paths.models,
+            manifest.targets.get(&key),
+            args.force,
+        )?;
+
+        let api_key = credentials::require_launch_key(&connection.base_url)?;
+        let model_check =
+            harness::preflight::check_models(&connection.base_url, &api_key, &model_ids);
+        if !model_check.missing.is_empty() {
+            return Err(TcampError::usage(
+                format!(
+                    "the model(s) {} were not found at {}",
+                    model_check.missing.join(", "),
+                    connection.base_url
+                ),
+                "pass a different model with `--model`, or upgrade tcamp when the curated catalog changes",
+            ));
+        }
+        warnings.extend(model_check.warnings);
+    }
+
+    let models_target = paths.models.clone();
+    let base_url = connection.base_url.clone();
+    let desired = move |existing: &config::TargetContents| {
+        pi::merge_models(existing.contents.as_deref(), &models_target, &base_url)
+    };
+
+    let inspect_target = paths.models.clone();
+    let force = args.force;
+    let inspect = move |existing: &config::TargetContents,
+                        entry: Option<&config::manifest::ManifestEntry>|
+          -> Result<config::engine::Inspection, TcampError> {
+        pi::inspect_models(existing.contents.as_deref(), &inspect_target, entry, force)
+    };
+
+    let prompt = !json && !args.yes && terminal::is_tty();
+    let outcome = config::engine::converge(config::engine::Request {
+        harness: pi::HARNESS_ID,
+        target: paths.models.clone(),
+        desired: &desired,
+        dry_run: args.dry_run,
+        prompt,
+        inspect: &inspect,
+    })?;
+    warnings.extend(outcome.warnings);
+
+    if outcome.declined {
+        if json {
+            return print_json(&SuccessReport {
+                ok: true,
+                base_url: Some(connection.base_url),
+                key: key_report(
+                    connection.masked_key,
+                    connection.source,
+                    connection.verified_at,
+                ),
+                harnesses: harness_report(pi::HARNESS_ID, &paths.models, "none", true),
+                warnings: warning_reports(&warnings),
+            });
+        }
+        print_warnings(&warnings);
+        println!("No changes.");
+        return Ok(());
+    }
+
+    let settings_outcome = if settings_written {
+        let settings_target = paths.settings.clone();
+        let desired = move |existing: &config::TargetContents| {
+            let unchanged = existing.contents.clone().unwrap_or_default();
+            let merge = pi::merge_settings(existing.contents.as_deref(), &settings_target)?;
+            Ok(merge.contents.unwrap_or(unchanged))
+        };
+        let settings_target = paths.settings.clone();
+        let inspect = move |existing: &config::TargetContents,
+                            _entry: Option<&config::manifest::ManifestEntry>|
+              -> Result<config::engine::Inspection, TcampError> {
+            pi::inspect_settings(existing.contents.as_deref(), &settings_target)
+        };
+        let settings_outcome = config::engine::converge(config::engine::Request {
+            harness: pi::HARNESS_ID,
+            target: paths.settings.clone(),
+            desired: &desired,
+            dry_run: args.dry_run,
+            prompt: false,
+            inspect: &inspect,
+        })?;
+        warnings.extend(settings_outcome.warnings.clone());
+        Some(settings_outcome)
+    } else {
+        None
+    };
+
+    let settings_changed = settings_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.action != config::engine::Action::None);
+    let any_change = outcome.action != config::engine::Action::None || settings_changed;
+    let primary_action = if outcome.action != config::engine::Action::None {
+        outcome.action
+    } else if settings_changed {
+        settings_outcome.as_ref().expect("settings changed").action
+    } else {
+        config::engine::Action::None
+    };
+
+    if args.dry_run {
+        let mut changes = vec![ChangeReport {
+            path: paths.models.display().to_string(),
+            action: outcome.action.as_str(),
+            diff: outcome.diff.unwrap_or_default(),
+        }];
+        if let Some(settings) = &settings_outcome {
+            if settings.action != config::engine::Action::None {
+                changes.push(ChangeReport {
+                    path: paths.settings.display().to_string(),
+                    action: settings.action.as_str(),
+                    diff: settings.diff.clone().unwrap_or_default(),
+                });
+            }
+        }
+        return print_dry_run(
+            connection,
+            pi::HARNESS_ID,
+            paths.models.clone(),
+            primary_action.as_str(),
+            changes,
+            warnings,
+            json,
+        );
+    }
+
+    let harnesses = harness_report(pi::HARNESS_ID, &paths.models, primary_action.as_str(), true);
+
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: Some(connection.base_url),
+            key: key_report(
+                connection.masked_key,
+                connection.source,
+                connection.verified_at,
+            ),
+            harnesses,
+            warnings: warning_reports(&warnings),
+        });
+    }
+
+    if args.no_launch {
+        print_warnings(&warnings);
+        if any_change {
+            println!("Configured pi: {}", paths.models.display());
+        } else {
+            println!("No changes.");
+        }
+        return Ok(());
+    }
+
+    let binary = harness::launch::require_binary(Harness::Pi)?;
+    if let Some(warning) = harness::launch::version_warning(Harness::Pi, &binary, pi::MIN_VERSION) {
+        warnings.push(warning);
+    }
+    print_warnings(&warnings);
+
+    if any_change {
+        eprintln!("Configured pi: {}", paths.models.display());
+    }
+
+    let api_key = credentials::require_launch_key(&connection.base_url)?;
+    let argv = pi::launch_args(&selection, &args.harness_args);
+    let environment = pi::launch_environment(&api_key);
+    eprintln!("Launching pi ...");
+    harness::launch::exec(Harness::Pi, &binary, &argv, &environment)
 }
 
 fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {

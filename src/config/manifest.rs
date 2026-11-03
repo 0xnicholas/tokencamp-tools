@@ -18,6 +18,7 @@ pub struct ManifestEntry {
     pub adopted: bool,
     pub provider_entry: Option<String>,
     pub model_ids: Vec<String>,
+    pub defaults: BTreeMap<String, String>,
     pub last_written_hash: Option<String>,
     pub backups: Vec<String>,
     pub updated_at: Option<String>,
@@ -122,6 +123,13 @@ impl Manifest {
                 model_ids.push(id.as_str());
             }
             table["model_ids"] = Item::Value(Value::Array(model_ids));
+            if !entry.defaults.is_empty() {
+                let mut defaults = Table::new();
+                for (name, value) in &entry.defaults {
+                    defaults[name.as_str()] = Item::Value(Value::from(value.as_str()));
+                }
+                table["defaults"] = Item::Table(defaults);
+            }
             if let Some(hash) = &entry.last_written_hash {
                 table["last_written_hash"] = Item::Value(Value::from(hash.as_str()));
             }
@@ -160,6 +168,7 @@ fn parse_entry(path: &Path, target: &str, table: &Table) -> Result<ManifestEntry
         .unwrap_or(false);
     let provider_entry = optional_string(path, target, table, "provider_entry")?;
     let model_ids = string_array(path, target, table, "model_ids")?;
+    let defaults = string_table(path, target, table, "defaults")?;
     let backups = string_array(path, target, table, "backups")?;
     let last_written_hash = optional_string(path, target, table, "last_written_hash")?;
     let updated_at = optional_string(path, target, table, "updated_at")?;
@@ -170,6 +179,7 @@ fn parse_entry(path: &Path, target: &str, table: &Table) -> Result<ManifestEntry
         adopted,
         provider_entry,
         model_ids,
+        defaults,
         last_written_hash,
         backups,
         updated_at,
@@ -212,6 +222,34 @@ fn string_array(
                     format!("target {target:?} has a non-string value in `{key}`"),
                 )
             })
+        })
+        .collect()
+}
+
+fn string_table(
+    path: &Path,
+    target: &str,
+    table: &Table,
+    key: &str,
+) -> Result<BTreeMap<String, String>, TcampError> {
+    let Some(item) = table.get(key) else {
+        return Ok(BTreeMap::new());
+    };
+    let defaults = item
+        .as_table()
+        .ok_or_else(|| unreadable(path, format!("target {target:?} has a non-table `{key}`")))?;
+    defaults
+        .iter()
+        .map(|(name, value)| {
+            value
+                .as_str()
+                .map(|value| (name.to_string(), value.to_string()))
+                .ok_or_else(|| {
+                    unreadable(
+                        path,
+                        format!("target {target:?} has a non-string value in `{key}`"),
+                    )
+                })
         })
         .collect()
 }

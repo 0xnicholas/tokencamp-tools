@@ -4,6 +4,7 @@ use std::process::Command;
 
 use crate::errors::TcampError;
 use crate::harness::Harness;
+use crate::warnings::Warning;
 
 pub fn binary_path(harness: Harness) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
@@ -83,6 +84,44 @@ pub fn exec(
             ))
         }
     }
+}
+
+pub fn version_warning(harness: Harness, binary: &Path, floor: &str) -> Option<Warning> {
+    let output = Command::new(binary).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let version = parse_version(&text)?;
+    let floor = parse_version(floor)?;
+    if version >= floor {
+        return None;
+    }
+    Some(Warning::new(
+        "harness_version",
+        format!(
+            "{} {} is below the tested version {}; the launch will continue",
+            harness.binary(),
+            render_version(version),
+            render_version(floor)
+        ),
+    ))
+}
+
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    text.split_whitespace().find_map(|token| {
+        let token = token.trim_start_matches('v');
+        let core = token.split(['-', '+']).next()?;
+        let mut parts = core.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        let patch = parts.next()?.parse().ok()?;
+        Some((major, minor, patch))
+    })
+}
+
+fn render_version((major, minor, patch): (u64, u64, u64)) -> String {
+    format!("{major}.{minor}.{patch}")
 }
 
 #[cfg(unix)]

@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod launch;
+pub mod pi;
 pub mod preflight;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

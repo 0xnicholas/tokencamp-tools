@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::manifest::{self, Manifest, ManifestEntry};
@@ -29,15 +30,18 @@ pub struct Inspection {
     pub adopted: bool,
     pub model_ids: Vec<String>,
     pub provider_entry: Option<String>,
+    pub defaults: BTreeMap<String, String>,
 }
 
 pub type InspectFn<'a> =
     dyn Fn(&TargetContents, Option<&ManifestEntry>) -> Result<Inspection, TcampError> + 'a;
 
+pub type DesiredFn<'a> = dyn Fn(&TargetContents) -> Result<Vec<u8>, TcampError> + 'a;
+
 pub struct Request<'a> {
     pub harness: &'a str,
     pub target: PathBuf,
-    pub desired: Vec<u8>,
+    pub desired: &'a DesiredFn<'a>,
     pub dry_run: bool,
     pub prompt: bool,
     pub inspect: &'a InspectFn<'a>,
@@ -55,18 +59,16 @@ pub struct Outcome {
 
 pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
     let mut existing = fs::read_target(&request.target)?;
+    let mut desired = (request.desired)(&existing)?;
 
     if request.dry_run {
-        inspect(&request, &existing, None)?;
-        let action = action_for(&existing, &request.desired);
+        let manifest = Manifest::load().ok();
+        inspect(&request, &existing, manifest.as_ref())?;
+        let action = action_for(&existing, &desired);
         let diff = if action == Action::None {
             String::new()
         } else {
-            diff::unified_diff(
-                existing.contents.as_deref(),
-                &request.desired,
-                &request.target,
-            )
+            diff::unified_diff(existing.contents.as_deref(), &desired, &request.target)
         };
         return Ok(Outcome {
             target: request.target,
@@ -120,11 +122,12 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
         }
         retried = true;
         existing = latest;
+        desired = (request.desired)(&existing)?;
     }
 
     let mut manifest_store = Some(Manifest::load()?);
     let inspection = inspect(&request, &existing, manifest_store.as_ref())?;
-    let action = action_for(&existing, &request.desired);
+    let action = action_for(&existing, &desired);
     let creating = existing.contents.is_none();
 
     let mut warnings = Vec::new();
@@ -141,7 +144,7 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
     let mut backup = None;
     match (creating, action) {
         (true, _) => {
-            fs::atomic_write(&existing.resolved.path, &request.desired, None)?;
+            fs::atomic_write(&existing.resolved.path, &desired, None)?;
         }
         (false, Action::Update) => {
             let contents = existing
@@ -153,7 +156,7 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
                 &request.target,
                 contents,
             )?);
-            fs::atomic_write(&existing.resolved.path, &request.desired, existing.mode)?;
+            fs::atomic_write(&existing.resolved.path, &desired, existing.mode)?;
         }
         _ => {}
     }
@@ -168,7 +171,10 @@ pub fn converge(request: Request<'_>) -> Result<Outcome, TcampError> {
             entry.provider_entry = inspection.provider_entry.clone();
         }
         entry.model_ids = inspection.model_ids.clone();
-        entry.last_written_hash = Some(manifest::hash_bytes(&request.desired));
+        for (name, value) in &inspection.defaults {
+            entry.defaults.insert(name.clone(), value.clone());
+        }
+        entry.last_written_hash = Some(manifest::hash_bytes(&desired));
         if backup.is_some() {
             entry.backups = backup::list_backups(request.harness, &request.target)?
                 .iter()

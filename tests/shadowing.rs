@@ -362,3 +362,139 @@ fn an_empty_auth_token_does_not_block_launch() {
     assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
     assert!(claude.ran());
 }
+
+#[test]
+fn an_auth_json_without_tokencamp_does_not_block_pi_and_is_left_alone() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let auth = r#"{"other":{"type":"oauth"}}"#;
+    fs::write(env.pi_auth_path(), auth).expect("write auth.json");
+    env.fake_harness("pi", "1.4.0");
+
+    let output = run(&env, &["pi"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert_eq!(
+        fs::read_to_string(env.pi_auth_path()).expect("read auth.json"),
+        auth
+    );
+}
+
+#[test]
+fn a_tokencamp_auth_entry_blocks_pi_launch_without_reading_or_changing_values() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    let shadowed = "sk-shadowed0123456789abcdef012345";
+    let auth = format!(r#"{{"tokencamp":{{"type":"api_key","key":"{shadowed}"}}}}"#);
+    fs::write(env.pi_auth_path(), &auth).expect("write auth.json");
+    let pi = env.fake_harness("pi", "1.4.0");
+
+    let output = run(&env, &["pi"]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
+    let message = stderr(&output);
+    assert!(message.contains("config_conflict"), "stderr: {message}");
+    assert!(
+        message.contains(&env.pi_auth_path().display().to_string()),
+        "stderr: {message}"
+    );
+    assert!(message.contains("tokencamp"), "stderr: {message}");
+    assert!(
+        !message.contains(shadowed),
+        "stderr leaked the value: {message}"
+    );
+    assert!(!pi.ran());
+    assert!(server.requests().is_empty());
+    assert_eq!(
+        fs::read_to_string(env.pi_auth_path()).expect("read auth.json"),
+        auth
+    );
+    assert!(!env.pi_models_path().exists());
+}
+
+#[test]
+fn force_does_not_bypass_the_pi_auth_shadowing_check() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    fs::write(
+        env.pi_auth_path(),
+        r#"{"tokencamp":{"type":"api_key","key":"sk-shadowed"}}"#,
+    )
+    .expect("write auth.json");
+    let pi = env.fake_harness("pi", "1.4.0");
+
+    let output = run(&env, &["pi", "--force"]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).contains("config_conflict"));
+    assert!(!pi.ran());
+}
+
+#[test]
+fn pi_no_launch_reports_auth_shadowing_as_a_warning_and_still_writes() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    fs::write(
+        env.pi_auth_path(),
+        r#"{"tokencamp":{"type":"api_key","key":"sk-shadowed"}}"#,
+    )
+    .expect("write auth.json");
+
+    let output = run(&env, &["pi", "--no-launch"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("shadowing_conflict"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(env.pi_models_path().exists());
+}
+
+#[test]
+fn a_corrupt_pi_auth_file_blocks_launch() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    fs::write(env.pi_auth_path(), "{\"tokencamp\":").expect("write auth.json");
+    let pi = env.fake_harness("pi", "1.4.0");
+
+    let output = run(&env, &["pi"]);
+
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("config_unreadable"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(!pi.ran());
+    assert!(!env.pi_models_path().exists());
+}
+
+#[test]
+fn pi_dry_run_warns_about_auth_shadowing_without_writing() {
+    let env = TestEnv::new();
+    let server = model_server();
+    login(&env, &server.url(""));
+    fs::write(
+        env.pi_auth_path(),
+        r#"{"tokencamp":{"type":"api_key","key":"sk-shadowed"}}"#,
+    )
+    .expect("write auth.json");
+
+    let output = run(&env, &["pi", "--dry-run"]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(server.requests().is_empty());
+    let message = stderr(&output);
+    assert!(message.contains("shadowing_conflict"), "stderr: {message}");
+    assert!(
+        message.contains(&env.pi_auth_path().display().to_string()),
+        "stderr: {message}"
+    );
+    assert!(!env.pi_models_path().exists());
+}
