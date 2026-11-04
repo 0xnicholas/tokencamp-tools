@@ -66,32 +66,43 @@ fn redact_sk_tokens(text: &str) -> String {
 }
 
 fn mask_secret_value(line: &str, key: &str) -> String {
-    let Some(key_index) = line.find(key) else {
-        return line.to_string();
-    };
+    let mut search_start = 0;
+    while let Some(relative) = line[search_start..].find(key) {
+        let key_index = search_start + relative;
+        let before = line[..key_index].chars().next_back();
+        let after = line[key_index + key.len()..].chars().next();
+        if is_identifier_boundary(before) && is_identifier_boundary(after) {
+            if let Some(masked) = mask_at(line, key_index, key) {
+                return masked;
+            }
+        }
+        search_start = key_index + key.len();
+    }
+    line.to_string()
+}
+
+fn is_identifier_boundary(character: Option<char>) -> bool {
+    character.is_none_or(|character| !(character.is_alphanumeric() || character == '_'))
+}
+
+fn mask_at(line: &str, key_index: usize, key: &str) -> Option<String> {
     let after = &line[key_index + key.len()..];
-    let Some(separator) = after.find([':', '=']) else {
-        return line.to_string();
-    };
+    let separator = after.find([':', '='])?;
     let value_part = &after[separator + 1..];
-    let Some(open) = value_part.find('"') else {
-        return line.to_string();
-    };
+    let open = value_part.find('"')?;
     let value_start = key_index + key.len() + separator + 1 + open + 1;
     let rest = &line[value_start..];
-    let Some(close) = rest.find('"') else {
-        return line.to_string();
-    };
+    let close = rest.find('"')?;
     let value = &rest[..close];
     if value.is_empty() || is_env_reference(value) {
-        return line.to_string();
+        return None;
     }
-    format!(
+    Some(format!(
         "{}{}{}",
         &line[..value_start],
         mask_secret(value),
         &line[value_start + close..]
-    )
+    ))
 }
 
 fn is_env_reference(value: &str) -> bool {

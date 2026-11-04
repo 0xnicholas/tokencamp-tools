@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::config::engine::Inspection;
 use crate::config::manifest::ManifestEntry;
 use crate::errors::TcampError;
+use crate::harness::api_base;
 use crate::models;
 use crate::warnings::Warning;
 
@@ -239,15 +240,6 @@ fn provider_value(base_url: &str) -> CstInputValue {
             CstInputValue::Array(exposed_ids().into_iter().map(model_value).collect()),
         ),
     ])
-}
-
-fn api_base(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    let root = match trimmed.strip_suffix("/v1") {
-        Some(candidate) if candidate.contains("://") && !candidate.ends_with("://") => candidate,
-        _ => trimmed,
-    };
-    format!("{root}/v1")
 }
 
 fn compat_fields() -> Vec<(String, CstInputValue)> {

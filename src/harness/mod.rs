@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod kimi;
 pub mod launch;
 pub mod pi;
 pub mod preflight;
@@ -35,4 +36,13 @@ pub fn detect() -> Vec<Harness> {
         .into_iter()
         .filter(|harness| launch::binary_path(*harness).is_some())
         .collect()
+}
+
+pub fn api_base(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let root = match trimmed.strip_suffix("/v1") {
+        Some(candidate) if candidate.contains("://") && !candidate.ends_with("://") => candidate,
+        _ => trimmed,
+    };
+    format!("{root}/v1")
 }

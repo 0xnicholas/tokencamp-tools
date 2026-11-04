@@ -140,6 +140,10 @@ impl TestEnv {
     pub fn pi_auth_path(&self) -> PathBuf {
         self.pi_agent.join("auth.json")
     }
+
+    pub fn kimi_config_path(&self) -> PathBuf {
+        self.kimi_home.join("config.toml")
+    }
 }
 
 pub fn model_routes() -> Vec<(&'static str, MockResponse)> {

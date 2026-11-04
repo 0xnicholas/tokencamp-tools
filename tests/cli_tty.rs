@@ -58,6 +58,48 @@ fn declining_the_first_write_does_not_launch() {
 }
 
 #[test]
+fn declining_the_kimi_first_write_does_not_launch() {
+    let env = TestEnv::new();
+    let server = MockServer::start_sequence(vec![MockResponse::json(200, r#"{"id":"model"}"#)]);
+    env.command()
+        .args([
+            "login",
+            "--key-stdin",
+            "--no-verify",
+            "--base-url",
+            &server.url(""),
+        ])
+        .write_stdin(KEY)
+        .assert()
+        .success();
+    let kimi = env.fake_harness("kimi", "2.1.1");
+
+    let mut command = env.std_command();
+    command.args(["kimi"]);
+    let output = run_pty(
+        command,
+        &[PtyStep {
+            await_text: "Write it? [Y/n] ",
+            send: "n\n",
+        }],
+    );
+
+    assert_eq!(
+        output.status.as_ref().and_then(|status| status.code()),
+        Some(0),
+        "pty output: {}",
+        output.output
+    );
+    assert!(
+        output.output.contains("No changes."),
+        "pty output: {}",
+        output.output
+    );
+    assert!(!kimi.ran(), "declining must not launch");
+    assert!(!env.kimi_config_path().exists());
+}
+
+#[test]
 fn first_launch_on_a_tty_prompts_for_the_key_then_the_overlay() {
     let env = TestEnv::new();
     let server = MockServer::start_sequence(vec![

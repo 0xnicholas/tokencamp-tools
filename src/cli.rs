@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::config;
 use crate::credentials::{self, ConnectionContext, KeySource, LoginReport, LogoutReport, Warning};
 use crate::errors::TcampError;
-use crate::harness::{self, Harness, claude, pi};
+use crate::harness::{self, Harness, claude, kimi, pi};
 use crate::models;
 use crate::output;
 use crate::terminal;
@@ -235,9 +235,8 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
         Command::Status => print_status_report(credentials::status()?, cli.json),
         Command::Claude(args) => configure_claude(args, cli.json),
         Command::Pi(args) => configure_pi(args, cli.json),
-        Command::Kimi(_) | Command::Doctor(_) | Command::Uninstall(_) => {
-            Err(TcampError::not_implemented(name))
-        }
+        Command::Kimi(args) => configure_kimi(args, cli.json),
+        Command::Doctor(_) | Command::Uninstall(_) => Err(TcampError::not_implemented(name)),
     }
 }
 
@@ -871,6 +870,159 @@ fn configure_pi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     let environment = pi::launch_environment(&api_key);
     eprintln!("Launching pi ...");
     harness::launch::exec(Harness::Pi, &binary, &argv, &environment)
+}
+
+fn configure_kimi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
+    let mut connection = credentials::resolve_connection(args.base_url.as_deref())?;
+    let selection = kimi::resolve_model(args.model.as_deref())?;
+    if !args.no_launch && !args.dry_run {
+        connection = credentials::ensure_launch_key(connection, terminal::is_interactive())?;
+    }
+    let connection = connection.require_key()?;
+    let paths = kimi::paths()?;
+    let model_ids = vec![selection.model.clone()];
+
+    let mut warnings = connection.warnings.clone();
+    if !args.dry_run && !args.no_launch {
+        let _ = harness::launch::require_binary(Harness::Kimi)?;
+    }
+
+    if !args.dry_run {
+        let existing = config::read_target(&paths.config)?;
+        let manifest = config::manifest::Manifest::load()?;
+        let key = existing.resolved.path.display().to_string();
+        kimi::inspect_config(
+            existing.contents.as_deref(),
+            &paths.config,
+            manifest.targets.get(&key),
+            args.force,
+        )?;
+
+        let api_key = credentials::require_launch_key(&connection.base_url)?;
+        let model_check =
+            harness::preflight::check_models(&connection.base_url, &api_key, &model_ids);
+        if !model_check.missing.is_empty() {
+            return Err(TcampError::usage(
+                format!(
+                    "the model(s) {} were not found at {}",
+                    model_check.missing.join(", "),
+                    connection.base_url
+                ),
+                "pass a different model with `--model`, or upgrade tcamp when the curated catalog changes",
+            ));
+        }
+        warnings.extend(model_check.warnings);
+    }
+
+    let target = paths.config.clone();
+    let base_url = connection.base_url.clone();
+    let desired = move |existing: &config::TargetContents| {
+        kimi::merge_config(existing.contents.as_deref(), &target, &base_url)
+    };
+
+    let inspect_target = paths.config.clone();
+    let force = args.force;
+    let inspect = move |existing: &config::TargetContents,
+                        entry: Option<&config::manifest::ManifestEntry>|
+          -> Result<config::engine::Inspection, TcampError> {
+        kimi::inspect_config(existing.contents.as_deref(), &inspect_target, entry, force)
+    };
+
+    let prompt = !json && !args.yes && terminal::is_tty();
+    let outcome = config::engine::converge(config::engine::Request {
+        harness: kimi::HARNESS_ID,
+        target: paths.config.clone(),
+        desired: &desired,
+        dry_run: args.dry_run,
+        prompt,
+        inspect: &inspect,
+    })?;
+    warnings.extend(outcome.warnings);
+
+    if outcome.declined {
+        if json {
+            return print_json(&SuccessReport {
+                ok: true,
+                base_url: Some(connection.base_url),
+                key: key_report(
+                    connection.masked_key,
+                    connection.source,
+                    connection.verified_at,
+                ),
+                harnesses: harness_report(kimi::HARNESS_ID, &paths.config, "none", true),
+                warnings: warning_reports(&warnings),
+            });
+        }
+        print_warnings(&warnings);
+        println!("No changes.");
+        return Ok(());
+    }
+
+    if args.dry_run {
+        let action = outcome.action.as_str();
+        return print_dry_run(
+            connection,
+            kimi::HARNESS_ID,
+            paths.config.clone(),
+            action,
+            vec![ChangeReport {
+                path: paths.config.display().to_string(),
+                action,
+                diff: outcome.diff.unwrap_or_default(),
+            }],
+            warnings,
+            json,
+        );
+    }
+
+    let harnesses = harness_report(
+        kimi::HARNESS_ID,
+        &paths.config,
+        outcome.action.as_str(),
+        true,
+    );
+
+    if json {
+        return print_json(&SuccessReport {
+            ok: true,
+            base_url: Some(connection.base_url),
+            key: key_report(
+                connection.masked_key,
+                connection.source,
+                connection.verified_at,
+            ),
+            harnesses,
+            warnings: warning_reports(&warnings),
+        });
+    }
+
+    if args.no_launch {
+        print_warnings(&warnings);
+        if outcome.action == config::engine::Action::None {
+            println!("No changes.");
+        } else {
+            println!("Configured kimi: {}", paths.config.display());
+        }
+        return Ok(());
+    }
+
+    let binary = harness::launch::require_binary(Harness::Kimi)?;
+    if let Some(warning) =
+        harness::launch::version_warning(Harness::Kimi, &binary, kimi::MIN_VERSION)
+    {
+        warnings.push(warning);
+    }
+    print_warnings(&warnings);
+
+    if outcome.action != config::engine::Action::None {
+        eprintln!("Configured kimi: {}", paths.config.display());
+    }
+
+    let api_key = credentials::require_launch_key(&connection.base_url)?;
+    let argv = kimi::launch_args(&selection, &args.harness_args);
+    let environment = kimi::launch_environment(&api_key);
+    eprintln!("Launching kimi ...");
+    harness::launch::exec(Harness::Kimi, &binary, &argv, &environment)
 }
 
 fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {
