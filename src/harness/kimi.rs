@@ -118,6 +118,10 @@ pub fn exposed_aliases() -> Vec<&'static str> {
     ALIASES.iter().map(|alias| alias.name).collect()
 }
 
+pub fn exposed_model_ids() -> Vec<&'static str> {
+    ALIASES.iter().map(|alias| alias.model).collect()
+}
+
 pub fn managed_model_ids() -> Vec<String> {
     exposed_aliases().into_iter().map(str::to_string).collect()
 }
@@ -414,6 +418,54 @@ pub fn inspect_config(
     let defaults = written_defaults(Some(&document));
 
     Ok(inspection(drift, unowned_entry, model_ids, defaults))
+}
+
+pub fn inspect_literal_key(
+    existing: Option<&[u8]>,
+    path: &Path,
+    entry: Option<&ManifestEntry>,
+) -> Result<LiteralKey, TcampError> {
+    let Some(contents) = existing else {
+        return Ok(LiteralKey::Absent);
+    };
+    if contents.iter().all(u8::is_ascii_whitespace) {
+        return Ok(LiteralKey::Absent);
+    }
+
+    let document = parse_document(Some(contents), path)?;
+    validate_structure(&document, path)?;
+    let provider = document
+        .get("providers")
+        .and_then(Item::as_table)
+        .and_then(|providers| providers.get(PROVIDER_ID))
+        .and_then(Item::as_table);
+    let Some(provider) = provider else {
+        return Ok(LiteralKey::Absent);
+    };
+    let Some(api_key) = provider.get("api_key") else {
+        return Ok(LiteralKey::Absent);
+    };
+    let Some(value) = api_key.as_str() else {
+        return Ok(LiteralKey::Invalid);
+    };
+    if value.trim().is_empty() {
+        return Ok(LiteralKey::Absent);
+    }
+
+    let owned = entry.and_then(|entry| entry.provider_entry.as_deref()) == Some(PROVIDER_ID);
+    Ok(if owned {
+        LiteralKey::Owned
+    } else {
+        LiteralKey::Unowned
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiteralKey {
+    Absent,
+    Owned,
+    Unowned,
+    Invalid,
 }
 
 fn inspection(

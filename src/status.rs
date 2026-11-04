@@ -34,7 +34,7 @@ pub fn snapshot() -> Result<Snapshot, TcampError> {
 
     let mut harnesses = BTreeMap::new();
     for harness in Harness::ALL {
-        let target = target_path(harness)?;
+        let target = harness::target_path(harness)?;
         let installed = harness::launch::binary_path(harness).is_some();
         let status = inspect(harness, &target, manifest.as_ref(), &mut warnings);
         harnesses.insert(
@@ -53,14 +53,6 @@ pub fn snapshot() -> Result<Snapshot, TcampError> {
         harnesses,
         warnings,
     })
-}
-
-fn target_path(harness: Harness) -> Result<PathBuf, TcampError> {
-    match harness {
-        Harness::Claude => config::claude_overlay_path(),
-        Harness::Pi => Ok(pi::paths()?.models),
-        Harness::Kimi => Ok(kimi::paths()?.config),
-    }
 }
 
 fn inspect(

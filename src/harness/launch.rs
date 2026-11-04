@@ -108,7 +108,7 @@ pub fn version_warning(harness: Harness, binary: &Path, floor: &str) -> Option<W
     ))
 }
 
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     text.split_whitespace().find_map(|token| {
         let token = token.trim_start_matches('v');
         let core = token.split(['-', '+']).next()?;
@@ -120,7 +120,7 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     })
 }
 
-fn render_version((major, minor, patch): (u64, u64, u64)) -> String {
+pub(crate) fn render_version((major, minor, patch): (u64, u64, u64)) -> String {
     format!("{major}.{minor}.{patch}")
 }
 

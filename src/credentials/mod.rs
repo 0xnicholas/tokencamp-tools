@@ -11,9 +11,10 @@ use crate::errors::TcampError;
 use crate::terminal;
 pub use crate::warnings::Warning;
 
-use base_url::{BaseUrl, DEFAULT_BASE_URL, HttpPolicy};
+pub(crate) use base_url::{BaseUrl, BaseUrlError, DEFAULT_BASE_URL, HttpPolicy};
 use probe::{ProbeResult, VerifyResult};
-use store::{Connection, CredentialStore, now};
+pub(crate) use store::CredentialStore;
+use store::{Connection, now};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySource {
@@ -379,7 +380,7 @@ fn validate_key(raw: &str) -> Result<String, TcampError> {
     Ok(key.to_string())
 }
 
-fn env_key() -> Option<String> {
+pub(crate) fn env_key() -> Option<String> {
     env::var("TOKENCAMP_API_KEY")
         .ok()
         .map(|key| key.trim().to_string())
@@ -393,7 +394,7 @@ fn missing_key_error() -> TcampError {
     )
 }
 
-fn key_has_expected_shape(key: &str) -> bool {
+pub(crate) fn key_has_expected_shape(key: &str) -> bool {
     key.starts_with("sk-") && key.chars().count() == 35
 }
 

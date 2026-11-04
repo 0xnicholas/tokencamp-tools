@@ -10,6 +10,7 @@ use crate::models;
 use crate::warnings::Warning;
 
 pub const HARNESS_ID: &str = "claude";
+pub const MIN_VERSION: &str = "2.1.304";
 pub const OVERLAY_VERSION: i64 = 1;
 pub const MESSAGES_UNVERIFIED_HINT: &str = "/v1/messages capability unverified; requires an anthropic deployment; run `tcamp doctor --harness claude`";
 const OVERLAY_SCHEMA: &str = "https://json.schemastore.org/claude-code-settings.json";
@@ -295,11 +296,11 @@ pub fn inspect_status(
     }
 }
 
-pub fn overlay_ownership(contents: &[u8], path: &Path) -> Result<OverlayOwnership, TcampError> {
+fn parse_overlay(contents: &[u8], path: &Path) -> Result<Value, TcampError> {
     let text = std::str::from_utf8(contents).map_err(|error| {
         crate::config::fs::unreadable(path, format!("the file is not valid UTF-8 ({error})"))
     })?;
-    let value: Value = serde_json::from_str(text).map_err(|error| {
+    serde_json::from_str(text).map_err(|error| {
         crate::config::fs::unreadable(
             path,
             format!(
@@ -308,18 +309,43 @@ pub fn overlay_ownership(contents: &[u8], path: &Path) -> Result<OverlayOwnershi
                 error.column()
             ),
         )
-    })?;
+    })
+}
 
+fn ownership_from_value(value: &Value) -> OverlayOwnership {
     let Some(marker) = value.get("_tcamp").and_then(Value::as_object) else {
-        return Ok(OverlayOwnership::Unowned);
+        return OverlayOwnership::Unowned;
     };
     let version = marker.get("version").and_then(Value::as_i64);
     let harness = marker.get("harness").and_then(Value::as_str);
     if version == Some(OVERLAY_VERSION) && harness == Some(HARNESS_ID) {
-        Ok(OverlayOwnership::Owned)
+        OverlayOwnership::Owned
     } else {
-        Ok(OverlayOwnership::Unowned)
+        OverlayOwnership::Unowned
     }
+}
+
+pub fn overlay_ownership(contents: &[u8], path: &Path) -> Result<OverlayOwnership, TcampError> {
+    Ok(ownership_from_value(&parse_overlay(contents, path)?))
+}
+
+pub fn inspect_config(
+    contents: &[u8],
+    path: &Path,
+) -> Result<crate::harness::StatusSnapshot, TcampError> {
+    let value = parse_overlay(contents, path)?;
+    let ownership = ownership_from_value(&value);
+    if ownership == OverlayOwnership::Owned && !value.get("env").is_some_and(|env| env.is_object())
+    {
+        return Err(crate::config::fs::unreadable(
+            path,
+            "the tcamp overlay has no `env` object",
+        ));
+    }
+    Ok(crate::harness::StatusSnapshot {
+        configured: ownership == OverlayOwnership::Owned,
+        conflict: ownership == OverlayOwnership::Unowned,
+    })
 }
 
 #[derive(Serialize)]

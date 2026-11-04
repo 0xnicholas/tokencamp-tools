@@ -189,7 +189,7 @@ fn run_with_args(args: Vec<OsString>) -> ExitCode {
             let verbose = cli.verbose;
             let color = output::color_choice(cli.no_color);
             match dispatch(cli) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(code) => ExitCode::from(code),
                 Err(error) => {
                     output::report(&error, json, color, verbose);
                     ExitCode::from(error.exit_code())
@@ -200,7 +200,7 @@ fn run_with_args(args: Vec<OsString>) -> ExitCode {
     }
 }
 
-fn dispatch(cli: Cli) -> Result<(), TcampError> {
+fn dispatch(cli: Cli) -> Result<u8, TcampError> {
     let Some(command) = cli.command else {
         if cli.json {
             return Err(TcampError::usage(
@@ -209,7 +209,7 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
             ));
         }
         print_bare_help();
-        return Ok(());
+        return Ok(0);
     };
 
     if let Command::Claude(args) | Command::Pi(args) | Command::Kimi(args) = &command {
@@ -222,24 +222,48 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
         }
     }
 
-    let name = command_name(&command);
     match command {
-        Command::Login(args) => match credentials::login(args, cli.json)? {
-            Some(report) => print_login_report(report, cli.json),
-            None => {
-                if !cli.json {
-                    println!("No changes.");
+        Command::Login(args) => {
+            match credentials::login(args, cli.json)? {
+                Some(report) => print_login_report(report, cli.json)?,
+                None => {
+                    if !cli.json {
+                        println!("No changes.");
+                    }
                 }
-                Ok(())
             }
-        },
-        Command::Logout(args) => print_logout_report(credentials::logout(args)?, cli.json),
-        Command::Status => print_status_report(status::snapshot()?, cli.json),
-        Command::Claude(args) => configure_claude(args, cli.json),
-        Command::Pi(args) => configure_pi(args, cli.json),
-        Command::Kimi(args) => configure_kimi(args, cli.json),
-        Command::Doctor(_) => Err(TcampError::not_implemented(name)),
-        Command::Uninstall(args) => uninstall::run(args, cli.json),
+            Ok(0)
+        }
+        Command::Logout(args) => {
+            print_logout_report(credentials::logout(args)?, cli.json)?;
+            Ok(0)
+        }
+        Command::Status => {
+            print_status_report(status::snapshot()?, cli.json)?;
+            Ok(0)
+        }
+        Command::Claude(args) => {
+            configure_claude(args, cli.json)?;
+            Ok(0)
+        }
+        Command::Pi(args) => {
+            configure_pi(args, cli.json)?;
+            Ok(0)
+        }
+        Command::Kimi(args) => {
+            configure_kimi(args, cli.json)?;
+            Ok(0)
+        }
+        Command::Doctor(args) => crate::doctor::run(
+            args,
+            cli.json,
+            cli.verbose,
+            output::color_choice(cli.no_color),
+        ),
+        Command::Uninstall(args) => {
+            uninstall::run(args, cli.json)?;
+            Ok(0)
+        }
     }
 }
 

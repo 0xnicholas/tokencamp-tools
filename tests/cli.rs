@@ -172,13 +172,12 @@ fn removed_commands_and_flags_are_rejected() {
 }
 
 #[test]
-fn placeholder_commands_exit_2_without_touching_the_filesystem() {
+fn harness_commands_without_a_key_exit_2_without_touching_the_filesystem() {
     let env = TestEnv::new();
     let cases: &[&[&str]] = &[
         &["claude"],
         &["pi", "--no-launch"],
         &["kimi", "--no-launch"],
-        &["doctor"],
     ];
 
     for args in cases {
@@ -194,11 +193,11 @@ fn placeholder_commands_exit_2_without_touching_the_filesystem() {
 }
 
 #[test]
-fn json_placeholder_failure_is_exactly_one_object() {
+fn json_doctor_usage_error_is_exactly_one_object() {
     let env = TestEnv::new();
     let output = env
         .command()
-        .args(["doctor", "--json"])
+        .args(["doctor", "--harness", "nope", "--json"])
         .output()
         .expect("run tcamp");
 
@@ -207,14 +206,9 @@ fn json_placeholder_failure_is_exactly_one_object() {
         error["message"]
             .as_str()
             .unwrap()
-            .contains("`tcamp doctor` is not implemented yet")
+            .contains("is not a harness managed by tcamp")
     );
-    assert!(
-        error["hint"]
-            .as_str()
-            .unwrap()
-            .contains("command-line shell")
-    );
+    assert!(error["hint"].as_str().unwrap().contains("use one of"));
 }
 
 #[test]
@@ -280,18 +274,21 @@ fn arguments_after_double_dash_are_passed_through() {
 }
 
 #[test]
-fn placeholder_commands_make_no_network_requests() {
+fn offline_commands_make_no_network_requests() {
     let env = TestEnv::new();
     let server = MockServer::start(MockResponse::json(200, "{}"));
-    let cases: &[&[&str]] = &[&["doctor", "--network"]];
 
-    for args in cases {
-        env.command()
-            .env("TOKENCAMP_BASE_URL", server.url(""))
-            .args(*args)
-            .assert()
-            .code(2);
-    }
+    env.command()
+        .env("TOKENCAMP_BASE_URL", server.url(""))
+        .arg("doctor")
+        .assert()
+        .code(1);
+
+    env.command()
+        .env("TOKENCAMP_BASE_URL", server.url(""))
+        .args(["doctor", "--network"])
+        .assert()
+        .code(2);
 
     env.command()
         .env("TOKENCAMP_BASE_URL", server.url(""))

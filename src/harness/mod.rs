@@ -32,6 +32,14 @@ impl Harness {
         self.id()
     }
 
+    pub fn min_version(self) -> &'static str {
+        match self {
+            Self::Claude => claude::MIN_VERSION,
+            Self::Pi => pi::MIN_VERSION,
+            Self::Kimi => kimi::MIN_VERSION,
+        }
+    }
+
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|harness| harness.id() == id)
     }
@@ -42,6 +50,14 @@ pub fn detect() -> Vec<Harness> {
         .into_iter()
         .filter(|harness| launch::binary_path(*harness).is_some())
         .collect()
+}
+
+pub fn target_path(harness: Harness) -> Result<std::path::PathBuf, crate::errors::TcampError> {
+    match harness {
+        Harness::Claude => crate::config::claude_overlay_path(),
+        Harness::Pi => Ok(pi::paths()?.models),
+        Harness::Kimi => Ok(kimi::paths()?.config),
+    }
 }
 
 pub fn api_base(base_url: &str) -> String {

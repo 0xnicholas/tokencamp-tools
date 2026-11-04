@@ -97,13 +97,6 @@ impl TcampError {
         self
     }
 
-    pub fn not_implemented(command: &str) -> Self {
-        Self::usage(
-            format!("`tcamp {command}` is not implemented yet"),
-            "this build only ships the command-line shell; run `tcamp help` to see the command tree",
-        )
-    }
-
     pub fn code(&self) -> &str {
         self.remote_code
             .as_deref()

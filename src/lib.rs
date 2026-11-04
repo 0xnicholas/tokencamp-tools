@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod credentials;
+pub mod doctor;
 pub mod errors;
 pub mod harness;
 pub mod http;
