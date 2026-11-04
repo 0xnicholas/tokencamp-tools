@@ -28,8 +28,17 @@ pub fn backup_target(harness: &str, target: &Path, contents: &[u8]) -> Result<Pa
 }
 
 pub fn list_backups(harness: &str, target: &Path) -> Result<Vec<PathBuf>, TcampError> {
-    let directory = paths::backups_dir(harness)?;
     let prefix = format!("{}.", config_fs::file_name(target));
+    let backups = list_all(harness)?.into_iter().filter(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().starts_with(&prefix))
+            .unwrap_or(false)
+    });
+    Ok(backups.collect())
+}
+
+pub fn list_all(harness: &str) -> Result<Vec<PathBuf>, TcampError> {
+    let directory = paths::backups_dir(harness)?;
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -46,10 +55,7 @@ pub fn list_backups(harness: &str, target: &Path) -> Result<Vec<PathBuf>, TcampE
         .map(|entry| entry.path())
         .filter(|path| {
             path.file_name()
-                .map(|name| {
-                    let name = name.to_string_lossy();
-                    name.starts_with(&prefix) && name.ends_with(".bak")
-                })
+                .map(|name| name.to_string_lossy().ends_with(".bak"))
                 .unwrap_or(false)
         })
         .collect();

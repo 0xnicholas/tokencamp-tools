@@ -341,6 +341,250 @@ fn find_model(models: &CstArray, id: &str) -> Option<CstObject> {
         .find(|model| string_property(model, "id").as_deref() == Some(id))
 }
 
+pub fn inspect_status(
+    existing: Option<&[u8]>,
+    path: &Path,
+    entry: Option<&ManifestEntry>,
+) -> Result<crate::harness::StatusSnapshot, TcampError> {
+    let Some(contents) = existing else {
+        return Ok(crate::harness::StatusSnapshot::default());
+    };
+    if contents.iter().all(u8::is_ascii_whitespace) {
+        return Ok(crate::harness::StatusSnapshot::default());
+    }
+
+    let text = std::str::from_utf8(contents).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("the file is not valid UTF-8 ({error})"))
+    })?;
+    let root = CstRootNode::parse(text, &ParseOptions::default()).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("cannot parse the file: {error}"))
+    })?;
+    let document = root
+        .object_value()
+        .ok_or_else(|| structure_error(path, "the root value is not an object"))?;
+
+    let Some(providers_property) = document.get("providers") else {
+        return Ok(crate::harness::StatusSnapshot::default());
+    };
+    let providers = providers_property
+        .value()
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| structure_error(path, "`providers` is not an object"))?;
+
+    if providers.get(PROVIDER_ID).is_some() {
+        providers
+            .object_value(PROVIDER_ID)
+            .ok_or_else(|| structure_error(path, "`providers.tokencamp` is not an object"))?;
+    } else {
+        return Ok(crate::harness::StatusSnapshot::default());
+    }
+
+    let owned = entry
+        .and_then(|entry| entry.provider_entry.as_deref())
+        .is_some_and(|provider| provider == PROVIDER_ID);
+    Ok(crate::harness::StatusSnapshot {
+        configured: owned,
+        conflict: !owned,
+    })
+}
+
+pub fn plan_removal(
+    path: &Path,
+    existing: &crate::config::TargetContents,
+    entry: Option<&ManifestEntry>,
+    force: bool,
+) -> Result<crate::uninstall::Removal, TcampError> {
+    use crate::uninstall::Removal;
+
+    let Some(contents) = existing.contents.as_deref() else {
+        return Ok(Removal::nothing(
+            "providers.tokencamp",
+            "models.json no longer exists",
+        ));
+    };
+    if contents.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Removal::nothing(
+            "providers.tokencamp",
+            "models.json is empty",
+        ));
+    }
+
+    let text = std::str::from_utf8(contents).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("the file is not valid UTF-8 ({error})"))
+    })?;
+    let root = CstRootNode::parse(text, &ParseOptions::default()).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("cannot parse the file: {error}"))
+    })?;
+    let document = root
+        .object_value()
+        .ok_or_else(|| structure_error(path, "the root value is not an object"))?;
+    let Some(providers_property) = document.get("providers") else {
+        return Ok(Removal::nothing(
+            "providers.tokencamp",
+            "there is no tokencamp provider entry",
+        ));
+    };
+    let providers = providers_property
+        .value()
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| structure_error(path, "`providers` is not an object"))?;
+    let Some(provider) = providers.get(PROVIDER_ID) else {
+        return Ok(Removal::nothing(
+            "providers.tokencamp",
+            "there is no tokencamp provider entry",
+        ));
+    };
+
+    let owned = entry
+        .and_then(|entry| entry.provider_entry.as_deref())
+        .is_some_and(|provider| provider == PROVIDER_ID);
+    let hash = crate::config::manifest::hash_bytes(contents);
+    let modified =
+        entry.is_some_and(|entry| entry.last_written_hash.as_deref() != Some(hash.as_str()));
+    let adopted = entry.is_some_and(|entry| entry.adopted);
+
+    if !owned && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp",
+            "config_conflict",
+            "the Pi provider entry `tokencamp` is not recorded as managed by tcamp; re-run with `--force` to remove it",
+        ));
+    }
+    if owned && adopted && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp",
+            "config_conflict",
+            "the Pi provider entry was adopted from an existing entry; re-run with `--force` to remove it",
+        ));
+    }
+    if owned && modified && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp",
+            "config_drift",
+            "models.json was modified outside tcamp; re-run with `--force` to remove the provider entry",
+        ));
+    }
+
+    provider.remove();
+    if providers.properties().is_empty() {
+        if let Some(property) = document.get("providers") {
+            property.remove();
+        }
+    }
+
+    let meaningful = document
+        .properties()
+        .iter()
+        .any(|property| property.decoded_name().as_deref() != Some("$schema"));
+    if !meaningful && entry.is_some_and(|entry| entry.created_file) && !existing.resolved.symlink {
+        return Ok(Removal::delete("models.json"));
+    }
+
+    let mut text = root.to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(Removal::rewrite("providers.tokencamp", text.into_bytes()))
+}
+
+pub fn plan_removal_settings(
+    path: &Path,
+    existing: &crate::config::TargetContents,
+    entry: Option<&ManifestEntry>,
+    force: bool,
+) -> Result<crate::uninstall::Removal, TcampError> {
+    use crate::uninstall::Removal;
+
+    let Some(contents) = existing.contents.as_deref() else {
+        return Ok(Removal::nothing(
+            "defaultProvider and defaultModel",
+            "settings.json no longer exists",
+        ));
+    };
+
+    let text = std::str::from_utf8(contents).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("the file is not valid UTF-8 ({error})"))
+    })?;
+    let root = CstRootNode::parse(text, &strict_options()).map_err(|error| {
+        crate::config::fs::unreadable(path, format!("cannot parse the file: {error}"))
+    })?;
+    let document = root
+        .object_value()
+        .ok_or_else(|| structure_error(path, "the root value is not an object"))?;
+
+    let (defaults, created_file) = match entry {
+        Some(entry) => {
+            if entry.defaults.is_empty() {
+                return Ok(Removal::nothing(
+                    "defaultProvider and defaultModel",
+                    "no tcamp-managed defaults are recorded",
+                ));
+            }
+            let hash = crate::config::manifest::hash_bytes(contents);
+            let modified = entry.last_written_hash.as_deref() != Some(hash.as_str());
+            if modified && !force {
+                return Ok(Removal::keep(
+                    "defaultProvider and defaultModel",
+                    "config_drift",
+                    "settings.json was modified outside tcamp; re-run with `--force` to remove the tcamp defaults",
+                ));
+            }
+            (entry.defaults.clone(), entry.created_file)
+        }
+        None if force => {
+            let mut defaults = BTreeMap::new();
+            if string_property(&document, "defaultProvider").as_deref() == Some("tokencamp") {
+                defaults.insert("defaultProvider".to_string(), "tokencamp".to_string());
+            }
+            if let Some(model) = string_property(&document, "defaultModel") {
+                if crate::models::catalog_model(&model).is_some() {
+                    defaults.insert("defaultModel".to_string(), model);
+                }
+            }
+            if defaults.is_empty() {
+                return Ok(Removal::nothing(
+                    "defaultProvider and defaultModel",
+                    "no tcamp defaults were found in settings.json",
+                ));
+            }
+            (defaults, false)
+        }
+        None => {
+            return Ok(Removal::nothing(
+                "defaultProvider and defaultModel",
+                "no tcamp-managed defaults are recorded",
+            ));
+        }
+    };
+
+    let mut removed = false;
+    for name in defaults.keys() {
+        if let Some(property) = document.get(name) {
+            property.remove();
+            removed = true;
+        }
+    }
+    if !removed {
+        return Ok(Removal::nothing(
+            "defaultProvider and defaultModel",
+            "the tcamp defaults are already gone",
+        ));
+    }
+
+    if document.properties().is_empty() && created_file && !existing.resolved.symlink {
+        return Ok(Removal::delete("settings.json"));
+    }
+
+    let mut text = root.to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(Removal::rewrite(
+        "defaultProvider and defaultModel",
+        text.into_bytes(),
+    ))
+}
+
 pub fn inspect_models(
     existing: Option<&[u8]>,
     path: &Path,

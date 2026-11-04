@@ -6,5 +6,7 @@ pub mod harness;
 pub mod http;
 pub mod models;
 pub mod output;
+pub mod status;
 pub mod terminal;
+pub mod uninstall;
 pub mod warnings;

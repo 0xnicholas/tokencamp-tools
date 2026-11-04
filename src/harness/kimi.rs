@@ -182,6 +182,183 @@ pub fn merge_config(
     Ok(text.into_bytes())
 }
 
+pub fn inspect_status(
+    existing: Option<&[u8]>,
+    path: &Path,
+    entry: Option<&ManifestEntry>,
+) -> Result<crate::harness::StatusSnapshot, TcampError> {
+    let Some(contents) = existing else {
+        return Ok(crate::harness::StatusSnapshot::default());
+    };
+    if contents.iter().all(u8::is_ascii_whitespace) {
+        return Ok(crate::harness::StatusSnapshot::default());
+    }
+
+    let document = parse_document(Some(contents), path)?;
+    validate_structure(&document, path)?;
+
+    let provider_present = document
+        .get("providers")
+        .and_then(Item::as_table)
+        .is_some_and(|providers| providers.contains_key(PROVIDER_ID));
+    let aliases_present = managed_aliases_present(&document);
+    if !provider_present && aliases_present.is_empty() {
+        return Ok(crate::harness::StatusSnapshot::default());
+    }
+
+    let owned = entry
+        .and_then(|entry| entry.provider_entry.as_deref())
+        .is_some_and(|provider| provider == PROVIDER_ID);
+    Ok(crate::harness::StatusSnapshot {
+        configured: owned,
+        conflict: !owned,
+    })
+}
+
+pub fn plan_removal(
+    path: &Path,
+    existing: &crate::config::TargetContents,
+    entry: Option<&ManifestEntry>,
+    force: bool,
+) -> Result<crate::uninstall::Removal, TcampError> {
+    use crate::uninstall::Removal;
+
+    let Some(contents) = existing.contents.as_deref() else {
+        return Ok(Removal::nothing(
+            "providers.tokencamp and model aliases",
+            "config.toml no longer exists",
+        ));
+    };
+    if contents.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Removal::nothing(
+            "providers.tokencamp and model aliases",
+            "config.toml is empty",
+        ));
+    }
+
+    let mut document = parse_document(Some(contents), path)?;
+    validate_structure(&document, path)?;
+
+    let provider_present = document
+        .get("providers")
+        .and_then(Item::as_table)
+        .is_some_and(|providers| providers.contains_key(PROVIDER_ID));
+    let aliases_present = managed_aliases_present(&document);
+    if !provider_present && aliases_present.is_empty() {
+        return Ok(Removal::nothing(
+            "providers.tokencamp and model aliases",
+            "there are no tokencamp entries",
+        ));
+    }
+
+    let owned = entry
+        .and_then(|entry| entry.provider_entry.as_deref())
+        .is_some_and(|provider| provider == PROVIDER_ID);
+    let hash = crate::config::manifest::hash_bytes(contents);
+    let modified =
+        entry.is_some_and(|entry| entry.last_written_hash.as_deref() != Some(hash.as_str()));
+    let adopted = entry.is_some_and(|entry| entry.adopted);
+
+    if !owned && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp and model aliases",
+            "config_conflict",
+            "the Kimi Code `tokencamp` entries are not recorded as managed by tcamp; re-run with `--force` to remove them",
+        ));
+    }
+    if owned && adopted && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp and model aliases",
+            "config_conflict",
+            "the Kimi Code entries were adopted from existing entries; re-run with `--force` to remove them",
+        ));
+    }
+    if owned && modified && !force {
+        return Ok(Removal::keep(
+            "providers.tokencamp and model aliases",
+            "config_drift",
+            "config.toml was modified outside tcamp; re-run with `--force` to remove the tokencamp entries",
+        ));
+    }
+
+    if let Some(providers) = document.get_mut("providers").and_then(Item::as_table_mut) {
+        providers.remove(PROVIDER_ID);
+    }
+
+    let names: Vec<String> = match entry {
+        Some(entry) if owned && !entry.model_ids.is_empty() => entry.model_ids.clone(),
+        _ => document
+            .get("models")
+            .and_then(Item::as_table)
+            .map(|models| {
+                models
+                    .iter()
+                    .map(|(name, _)| name.to_string())
+                    .filter(|name| {
+                        name.starts_with("tokencamp/")
+                            || ALIASES.iter().any(|alias| alias.name == name)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    if let Some(models) = document.get_mut("models").and_then(Item::as_table_mut) {
+        for name in &names {
+            models.remove(name);
+        }
+    }
+
+    match entry {
+        Some(entry) => {
+            if let Some(value) = entry.defaults.get("default_model") {
+                let current = document.get("default_model").and_then(Item::as_str);
+                if force || current == Some(value.as_str()) {
+                    document.as_table_mut().remove("default_model");
+                }
+            }
+        }
+        None if force => {
+            let managed = document
+                .get("default_model")
+                .and_then(Item::as_str)
+                .is_some_and(|value| {
+                    value.starts_with("tokencamp/")
+                        || ALIASES.iter().any(|alias| alias.name == value)
+                });
+            if managed {
+                document.as_table_mut().remove("default_model");
+            }
+        }
+        None => {}
+    }
+
+    for table in ["providers", "models"] {
+        let empty = document
+            .get(table)
+            .and_then(Item::as_table)
+            .is_some_and(Table::is_empty);
+        if empty {
+            document.as_table_mut().remove(table);
+        }
+    }
+
+    if document.as_table().is_empty()
+        && entry.is_some_and(|entry| entry.created_file)
+        && !existing.resolved.symlink
+    {
+        return Ok(Removal::delete("config.toml"));
+    }
+
+    let mut text = document.to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(Removal::rewrite(
+        "providers.tokencamp and model aliases",
+        text.into_bytes(),
+    ))
+}
+
 pub fn inspect_config(
     existing: Option<&[u8]>,
     path: &Path,

@@ -282,6 +282,10 @@ pub fn status() -> Result<ConnectionContext, TcampError> {
     resolve_connection(None)
 }
 
+pub fn credentials_path() -> Result<PathBuf, TcampError> {
+    store::credentials_path()
+}
+
 pub fn require_launch_key(base_url: &str) -> Result<String, TcampError> {
     launch_key(base_url)?.ok_or_else(missing_key_error)
 }

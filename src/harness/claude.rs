@@ -224,6 +224,77 @@ pub fn unowned_conflict(target: &Path) -> TcampError {
     )
 }
 
+pub fn plan_removal(
+    path: &Path,
+    existing: &crate::config::TargetContents,
+    entry: Option<&crate::config::manifest::ManifestEntry>,
+    force: bool,
+) -> Result<crate::uninstall::Removal, TcampError> {
+    use crate::uninstall::Removal;
+
+    let Some(contents) = existing.contents.as_deref() else {
+        return Ok(Removal::nothing(
+            "Claude Code overlay",
+            "the overlay no longer exists",
+        ));
+    };
+    let ownership = overlay_ownership(contents, path)?;
+    let hash = crate::config::manifest::hash_bytes(contents);
+    let modified =
+        entry.is_some_and(|entry| entry.last_written_hash.as_deref() != Some(hash.as_str()));
+    let adopted = entry.is_some_and(|entry| entry.adopted);
+
+    let removal = match ownership {
+        OverlayOwnership::Owned if entry.is_none() => Removal::delete("Claude Code overlay"),
+        OverlayOwnership::Owned if adopted && !force => Removal::keep(
+            "Claude Code overlay",
+            "config_conflict",
+            "the overlay was adopted from an existing file; re-run with `--force` to remove it",
+        ),
+        OverlayOwnership::Owned if modified && !force => Removal::keep(
+            "Claude Code overlay",
+            "config_drift",
+            "the overlay was modified outside tcamp; re-run with `--force` to remove it",
+        ),
+        OverlayOwnership::Owned => Removal::delete("Claude Code overlay"),
+        OverlayOwnership::Unowned if entry.is_some() && force => {
+            Removal::delete("Claude Code overlay")
+        }
+        OverlayOwnership::Unowned if entry.is_some() => Removal::keep(
+            "Claude Code overlay",
+            "config_conflict",
+            "the overlay no longer carries the tcamp marker; re-run with `--force` to remove it",
+        ),
+        OverlayOwnership::Unowned => {
+            Removal::nothing("Claude Code overlay", "the overlay is not managed by tcamp")
+        }
+    };
+
+    if removal.action == crate::uninstall::Action::Delete && existing.resolved.symlink {
+        return Ok(Removal::rewrite("Claude Code overlay", b"{}\n".to_vec()));
+    }
+    Ok(removal)
+}
+
+pub fn inspect_status(
+    contents: Option<&[u8]>,
+    path: &Path,
+) -> Result<crate::harness::StatusSnapshot, TcampError> {
+    let Some(contents) = contents else {
+        return Ok(crate::harness::StatusSnapshot::default());
+    };
+    match overlay_ownership(contents, path)? {
+        OverlayOwnership::Owned => Ok(crate::harness::StatusSnapshot {
+            configured: true,
+            conflict: false,
+        }),
+        OverlayOwnership::Unowned => Ok(crate::harness::StatusSnapshot {
+            configured: false,
+            conflict: true,
+        }),
+    }
+}
+
 pub fn overlay_ownership(contents: &[u8], path: &Path) -> Result<OverlayOwnership, TcampError> {
     let text = std::str::from_utf8(contents).map_err(|error| {
         crate::config::fs::unreadable(path, format!("the file is not valid UTF-8 ({error})"))

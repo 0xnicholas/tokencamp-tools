@@ -14,7 +14,9 @@ use crate::errors::TcampError;
 use crate::harness::{self, Harness, claude, kimi, pi};
 use crate::models;
 use crate::output;
+use crate::status;
 use crate::terminal;
+use crate::uninstall;
 
 const QUICKSTART: &str = "Quickstart:
   tcamp login
@@ -232,11 +234,12 @@ fn dispatch(cli: Cli) -> Result<(), TcampError> {
             }
         },
         Command::Logout(args) => print_logout_report(credentials::logout(args)?, cli.json),
-        Command::Status => print_status_report(credentials::status()?, cli.json),
+        Command::Status => print_status_report(status::snapshot()?, cli.json),
         Command::Claude(args) => configure_claude(args, cli.json),
         Command::Pi(args) => configure_pi(args, cli.json),
         Command::Kimi(args) => configure_kimi(args, cli.json),
-        Command::Doctor(_) | Command::Uninstall(_) => Err(TcampError::not_implemented(name)),
+        Command::Doctor(_) => Err(TcampError::not_implemented(name)),
+        Command::Uninstall(args) => uninstall::run(args, cli.json),
     }
 }
 
@@ -442,7 +445,7 @@ fn print_dry_run(
     let harnesses = harness_report(harness, &target, action, action != "create");
 
     if json {
-        return print_json(&ConfigureReport {
+        return output::print_json(&ConfigureReport {
             ok: true,
             base_url: Some(connection.base_url),
             key: key_report(
@@ -614,7 +617,7 @@ fn configure_claude(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     let harnesses = harness_report(claude::HARNESS_ID, &target, outcome.action.as_str(), true);
 
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&SuccessReport {
             ok: true,
             base_url: Some(connection.base_url),
             key: key_report(
@@ -747,7 +750,7 @@ fn configure_pi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
 
     if outcome.declined {
         if json {
-            return print_json(&SuccessReport {
+            return output::print_json(&SuccessReport {
                 ok: true,
                 base_url: Some(connection.base_url),
                 key: key_report(
@@ -832,7 +835,7 @@ fn configure_pi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     let harnesses = harness_report(pi::HARNESS_ID, &paths.models, primary_action.as_str(), true);
 
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&SuccessReport {
             ok: true,
             base_url: Some(connection.base_url),
             key: key_report(
@@ -941,7 +944,7 @@ fn configure_kimi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
 
     if outcome.declined {
         if json {
-            return print_json(&SuccessReport {
+            return output::print_json(&SuccessReport {
                 ok: true,
                 base_url: Some(connection.base_url),
                 key: key_report(
@@ -983,7 +986,7 @@ fn configure_kimi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
     );
 
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&SuccessReport {
             ok: true,
             base_url: Some(connection.base_url),
             key: key_report(
@@ -1027,7 +1030,7 @@ fn configure_kimi(args: HarnessArgs, json: bool) -> Result<(), TcampError> {
 
 fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError> {
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&SuccessReport {
             ok: true,
             base_url: Some(report.base_url),
             key: Some(KeyReport {
@@ -1055,7 +1058,7 @@ fn print_login_report(report: LoginReport, json: bool) -> Result<(), TcampError>
 
 fn print_logout_report(report: LogoutReport, json: bool) -> Result<(), TcampError> {
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&SuccessReport {
             ok: true,
             base_url: report.base_url,
             key: None,
@@ -1083,49 +1086,87 @@ fn print_logout_report(report: LogoutReport, json: bool) -> Result<(), TcampErro
     Ok(())
 }
 
-fn print_status_report(report: ConnectionContext, json: bool) -> Result<(), TcampError> {
-    let key = match (&report.masked_key, report.source) {
-        (Some(masked), Some(source)) => Some(KeyReport {
-            masked: masked.clone(),
-            source: source.as_str(),
-            verified: report.verified_at.is_some(),
-            verified_at: report.verified_at.clone(),
-        }),
-        _ => None,
-    };
+#[derive(Serialize)]
+struct StatusReport {
+    ok: bool,
+    base_url: String,
+    key: Option<KeyReport>,
+    credentials: String,
+    harnesses: BTreeMap<String, HarnessStatusReport>,
+    warnings: Vec<WarningReport>,
+}
+
+#[derive(Serialize)]
+struct HarnessStatusReport {
+    installed: bool,
+    configured: bool,
+    target: String,
+    conflict: bool,
+}
+
+fn print_status_report(report: status::Snapshot, json: bool) -> Result<(), TcampError> {
+    let key = key_report(
+        report.connection.masked_key.clone(),
+        report.connection.source,
+        report.connection.verified_at.clone(),
+    );
+    let harnesses: BTreeMap<String, HarnessStatusReport> = report
+        .harnesses
+        .iter()
+        .map(|(name, status)| {
+            (
+                (*name).to_string(),
+                HarnessStatusReport {
+                    installed: status.installed,
+                    configured: status.configured,
+                    target: status.target.display().to_string(),
+                    conflict: status.conflict,
+                },
+            )
+        })
+        .collect();
 
     if json {
-        return print_json(&SuccessReport {
+        return output::print_json(&StatusReport {
             ok: true,
-            base_url: Some(report.base_url),
+            base_url: report.connection.base_url,
             key,
-            harnesses: BTreeMap::new(),
+            credentials: report.connection.credentials_path.display().to_string(),
+            harnesses,
             warnings: warning_reports(&report.warnings),
         });
     }
 
-    println!("Base URL: {}", report.base_url);
+    println!("Base URL: {}", report.connection.base_url);
     match &key {
         Some(key) => println!("API key: {} (source: {})", key.masked, key.source),
         None => println!("API key: none"),
     }
-    if let Some(verified_at) = &report.verified_at {
+    if let Some(verified_at) = &report.connection.verified_at {
         println!("Verified at: {verified_at}");
     }
-    println!("Credentials: {}", report.credentials_path.display());
+    println!(
+        "Credentials: {}",
+        report.connection.credentials_path.display()
+    );
+    println!();
+    println!("Harness  Installed  Configured  Conflict  Target");
+    for (name, status) in &report.harnesses {
+        println!(
+            "{:<8} {:<10} {:<11} {:<9} {}",
+            name,
+            yes_no(status.installed),
+            yes_no(status.configured),
+            yes_no(status.conflict),
+            status.target.display()
+        );
+    }
     print_warnings(&report.warnings);
     Ok(())
 }
 
-fn print_json(report: &impl Serialize) -> Result<(), TcampError> {
-    let payload = serde_json::to_string(report).map_err(|error| {
-        TcampError::io(
-            format!("failed to encode the result as JSON: {error}"),
-            "re-run without `--json`",
-        )
-    })?;
-    println!("{payload}");
-    Ok(())
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn print_warnings(warnings: &[Warning]) {

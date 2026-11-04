@@ -185,7 +185,11 @@ fn write_and_rename(
     let _ = mode;
 
     if cfg!(debug_assertions) && env::var_os("TCAMP_TEST_FAIL_CONFIG_RENAME").is_some() {
-        return Err(io::Error::other("injected config rename failure"));
+        let matches_name = env::var_os("TCAMP_TEST_FAIL_CONFIG_RENAME_NAME")
+            .is_none_or(|name| path.file_name().is_some_and(|file| file == name));
+        if matches_name {
+            return Err(io::Error::other("injected config rename failure"));
+        }
     }
 
     fs::rename(temporary, path)?;

@@ -4,6 +4,12 @@ pub mod launch;
 pub mod pi;
 pub mod preflight;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatusSnapshot {
+    pub configured: bool,
+    pub conflict: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Harness {
     Claude,

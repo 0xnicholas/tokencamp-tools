@@ -179,7 +179,6 @@ fn placeholder_commands_exit_2_without_touching_the_filesystem() {
         &["pi", "--no-launch"],
         &["kimi", "--no-launch"],
         &["doctor"],
-        &["uninstall", "--dry-run"],
     ];
 
     for args in cases {
@@ -284,7 +283,7 @@ fn arguments_after_double_dash_are_passed_through() {
 fn placeholder_commands_make_no_network_requests() {
     let env = TestEnv::new();
     let server = MockServer::start(MockResponse::json(200, "{}"));
-    let cases: &[&[&str]] = &[&["doctor", "--network"], &["uninstall", "--dry-run"]];
+    let cases: &[&[&str]] = &[&["doctor", "--network"]];
 
     for args in cases {
         env.command()
@@ -293,6 +292,12 @@ fn placeholder_commands_make_no_network_requests() {
             .assert()
             .code(2);
     }
+
+    env.command()
+        .env("TOKENCAMP_BASE_URL", server.url(""))
+        .args(["uninstall", "--dry-run"])
+        .assert()
+        .success();
 
     assert!(server.requests().is_empty());
 }

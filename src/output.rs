@@ -29,6 +29,17 @@ struct ErrorBody<'a> {
     request_id: Option<&'a str>,
 }
 
+pub fn print_json(report: &impl Serialize) -> Result<(), TcampError> {
+    let payload = serde_json::to_string(report).map_err(|error| {
+        TcampError::io(
+            format!("failed to encode the result as JSON: {error}"),
+            "re-run without `--json`",
+        )
+    })?;
+    println!("{payload}");
+    Ok(())
+}
+
 pub fn color_choice(no_color: bool) -> ColorChoice {
     let term_is_dumb = env::var_os("TERM").is_some_and(|value| value == "dumb");
     if no_color || env::var_os("NO_COLOR").is_some() || term_is_dumb {

@@ -34,7 +34,7 @@ impl ErrorCode {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 #[error("{message}")]
 pub struct TcampError {
     code: ErrorCode,

@@ -742,7 +742,9 @@ fn status_reports_env_override_without_persisting_it() {
     assert_eq!(value["key"]["source"], "env");
     assert_eq!(value["key"]["verified"], false);
     assert!(value["key"]["verified_at"].is_null());
-    assert_eq!(value["harnesses"], json!({}));
+    for harness in ["claude", "pi", "kimi"] {
+        assert_eq!(value["harnesses"][harness]["configured"], false);
+    }
     assert_eq!(
         connection(&credentials(&env), "https://status.test")["api_key"].as_str(),
         Some(KEY)
