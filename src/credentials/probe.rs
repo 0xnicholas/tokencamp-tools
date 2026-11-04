@@ -15,6 +15,7 @@ const VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum ProbeResult {
     Verified {
         warning: Option<Warning>,
+        request_id: Option<String>,
     },
     Rejected {
         code: Option<String>,
@@ -70,7 +71,10 @@ pub fn probe(base: &BaseUrl, api_key: &str) -> ProbeResult {
     let request_id = request_id(&response, api_key);
     let body = response.text().unwrap_or_default();
     match status {
-        200 => ProbeResult::Verified { warning: None },
+        200 => ProbeResult::Verified {
+            warning: None,
+            request_id,
+        },
         401 => ProbeResult::Rejected {
             code: error_code(&body, api_key),
             request_id,
@@ -78,7 +82,10 @@ pub fn probe(base: &BaseUrl, api_key: &str) -> ProbeResult {
         404 => {
             let code = error_code(&body, api_key);
             if code.as_deref() == Some("generation_not_found") {
-                ProbeResult::Verified { warning: None }
+                ProbeResult::Verified {
+                    warning: None,
+                    request_id,
+                }
             } else {
                 ProbeResult::Indeterminate {
                     detail: format!(
@@ -92,6 +99,7 @@ pub fn probe(base: &BaseUrl, api_key: &str) -> ProbeResult {
             let code = warning_code(&body, &format!("probe_{status}"), api_key);
             ProbeResult::Verified {
                 warning: Some(warning_for_status(status, code, base)),
+                request_id,
             }
         }
         _ => ProbeResult::Indeterminate {
@@ -178,7 +186,7 @@ fn transport_detail(base: &BaseUrl, error: &reqwest::Error) -> String {
     }
 }
 
-fn request_id(response: &Response, api_key: &str) -> Option<String> {
+pub(crate) fn request_id(response: &Response, api_key: &str) -> Option<String> {
     response
         .headers()
         .get("x-request-id")
@@ -190,7 +198,7 @@ fn request_id(response: &Response, api_key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn error_code(body: &str, api_key: &str) -> Option<String> {
+pub(crate) fn error_code(body: &str, api_key: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     value
         .get("error")

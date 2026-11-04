@@ -19,6 +19,8 @@ use crate::harness::{self, Harness, claude, kimi, pi};
 use crate::models;
 use crate::output;
 
+mod net;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Status {
@@ -80,6 +82,11 @@ impl Check {
         self.code = Some(code.into());
         self
     }
+
+    fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.request_id = request_id;
+        self
+    }
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -124,15 +131,8 @@ pub fn run(
     verbose: bool,
     color: ColorChoice,
 ) -> Result<u8, TcampError> {
-    if args.network || args.verify {
-        return Err(TcampError::usage(
-            "network checks are not implemented in this build",
-            "run `tcamp doctor` without `--network` or `--verify` for the offline report",
-        ));
-    }
-
     let selected = select_harnesses(args.harness.as_deref())?;
-    let report = build_report(&selected)?;
+    let report = build_report(&selected, args.network, args.verify)?;
 
     if json {
         output::print_json(&report)?;
@@ -157,7 +157,27 @@ fn select_harnesses(name: Option<&str>) -> Result<Vec<Harness>, TcampError> {
     }
 }
 
-fn build_report(selected: &[Harness]) -> Result<DoctorReport, TcampError> {
+#[derive(Clone, Copy)]
+struct NetworkContext<'a> {
+    state: NetworkState<'a>,
+    verify: bool,
+    claude_only: bool,
+}
+
+#[derive(Clone, Copy)]
+enum NetworkState<'a> {
+    Offline,
+    NoKey,
+    UnusableBase,
+    Ready { base: &'a BaseUrl, api_key: &'a str },
+}
+
+fn build_report(
+    selected: &[Harness],
+    network: bool,
+    verify: bool,
+) -> Result<DoctorReport, TcampError> {
+    let network_active = network || verify;
     let credentials_path = credentials::credentials_path()?;
     let env_key = credentials::env_key();
     let credential_file = inspect_credential_file(&credentials_path, env_key.is_some());
@@ -171,33 +191,41 @@ fn build_report(selected: &[Harness]) -> Result<DoctorReport, TcampError> {
         .map(|base| base.as_str().to_string())
         .unwrap_or_else(|_| raw_base_url.clone());
 
-    let (key_check, key) = inspect_key(
+    let (key_check, mut key, raw_key) = inspect_key(
         store.as_ref(),
         parsed_base_url.as_ref().ok(),
         env_key.as_deref(),
     );
     let base_check = inspect_base_url(parsed_base_url.as_ref());
 
+    let usable_base = parsed_base_url
+        .as_ref()
+        .ok()
+        .filter(|base| base.http_policy() != HttpPolicy::InsecurePublic);
+    let network_state = match (network_active, raw_key.as_deref(), usable_base) {
+        (false, _, _) => NetworkState::Offline,
+        (true, None, _) => NetworkState::NoKey,
+        (true, Some(_), None) => NetworkState::UnusableBase,
+        (true, Some(api_key), Some(base)) => NetworkState::Ready { base, api_key },
+    };
+    let claude_only = selected == [Harness::Claude];
+    let context = NetworkContext {
+        state: network_state,
+        verify,
+        claude_only,
+    };
+
     let manifest = Manifest::load();
     let mut checks = vec![file_check, key_check, base_check];
-    checks.push(Check::new(
-        "network.reachable",
-        "network",
-        None,
-        Status::Skip,
-        "offline; use --network",
-    ));
-    checks.push(Check::new(
-        "network.auth",
-        "network",
-        None,
-        Status::Skip,
-        "offline; use --network",
-    ));
+    let (network_checks, key_verified) = inspect_network(context);
+    checks.extend(network_checks);
+    if let Some(key) = key.as_mut() {
+        key.verified = key_verified;
+    }
 
     let mut harnesses = BTreeMap::new();
     for harness in selected {
-        let (view, harness_checks) = inspect_harness(*harness, &manifest);
+        let (view, harness_checks) = inspect_harness(*harness, &manifest, context);
         harnesses.insert(harness.id().to_string(), view);
         checks.extend(harness_checks);
     }
@@ -213,13 +241,104 @@ fn build_report(selected: &[Harness]) -> Result<DoctorReport, TcampError> {
         ok: summary.fail == 0,
         base_url,
         key,
-        network: false,
-        verify: false,
+        network: network_active,
+        verify,
         harnesses,
         checks,
         warnings,
         summary,
     })
+}
+
+fn inspect_network(context: NetworkContext<'_>) -> (Vec<Check>, Option<bool>) {
+    let reachable = inspect_network_check("network.reachable", context.state, net::reachable);
+    let auth = inspect_network_check("network.auth", context.state, net::auth);
+    let key_verified = match context.state {
+        NetworkState::Ready { .. } => Some(true),
+        _ => None,
+    };
+
+    let verify = if !context.verify {
+        skip_network("network.verify", "not requested; use --verify")
+    } else if context.claude_only {
+        skip_network("network.verify", "handled by harness.claude.messages")
+    } else {
+        inspect_network_check("network.verify", context.state, net::verify_chat)
+    };
+
+    (vec![reachable, auth, verify], key_verified)
+}
+
+fn inspect_network_check(
+    id: &str,
+    state: NetworkState<'_>,
+    check: fn(&BaseUrl, &str) -> net::Outcome,
+) -> Check {
+    match state {
+        NetworkState::Ready { base, api_key } => {
+            outcome_check(id, "network", None, check(base, api_key))
+        }
+        skipped => skipped_check(id, "network", None, skipped),
+    }
+}
+
+fn network_skip_reason(state: NetworkState<'_>) -> &'static str {
+    match state {
+        NetworkState::Offline => "offline; use --network",
+        NetworkState::NoKey => "no API key",
+        NetworkState::UnusableBase => "the base URL is not usable",
+        NetworkState::Ready { .. } => "not applicable",
+    }
+}
+
+fn skip_network(id: &str, message: &str) -> Check {
+    Check::new(id, "network", None, Status::Skip, message)
+}
+
+fn skipped_check(
+    id: &str,
+    scope: &'static str,
+    harness: Option<&'static str>,
+    state: NetworkState<'_>,
+) -> Check {
+    Check::new(id, scope, harness, Status::Skip, network_skip_reason(state))
+}
+
+fn outcome_check(
+    id: &str,
+    scope: &'static str,
+    harness: Option<&'static str>,
+    outcome: net::Outcome,
+) -> Check {
+    match outcome {
+        net::Outcome::Pass {
+            message,
+            request_id,
+        } => Check::new(id, scope, harness, Status::Pass, message).with_request_id(request_id),
+        net::Outcome::Warn {
+            code,
+            message,
+            hint,
+            request_id,
+        } => {
+            let check = Check::new(id, scope, harness, Status::Warn, message)
+                .with_code(code)
+                .with_request_id(request_id);
+            match hint {
+                Some(hint) => check.with_hint(hint),
+                None => check,
+            }
+        }
+        net::Outcome::Fail {
+            code,
+            message,
+            hint,
+            request_id,
+        } => Check::new(id, scope, harness, Status::Fail, message)
+            .with_hint(hint)
+            .with_code(code)
+            .with_request_id(request_id),
+    }
 }
 
 fn resolve_raw_base_url(store: Option<&CredentialStore>) -> String {
@@ -440,7 +559,7 @@ fn inspect_key(
     store: Option<&CredentialStore>,
     base_url: Option<&BaseUrl>,
     env_key: Option<&str>,
-) -> (Check, Option<DoctorKey>) {
+) -> (Check, Option<DoctorKey>, Option<String>) {
     let file_connection = store.and_then(|store| match base_url {
         Some(base_url) => store.connection(base_url.as_str()),
         None => store
@@ -492,6 +611,7 @@ fn inspect_key(
                 verified: None,
                 verified_at: None,
             }),
+            Some(env_key.to_string()),
         );
     }
 
@@ -526,6 +646,7 @@ fn inspect_key(
                 verified: None,
                 verified_at: connection.verified_at.clone(),
             }),
+            Some(connection.api_key.clone()),
         );
     }
 
@@ -539,6 +660,7 @@ fn inspect_key(
         )
         .with_hint("run `tcamp login --key-stdin` or set TOKENCAMP_API_KEY")
         .with_code("missing_key"),
+        None,
         None,
     )
 }
@@ -572,13 +694,14 @@ struct TargetProbe {
 fn inspect_harness(
     harness: Harness,
     manifest: &Result<Manifest, TcampError>,
+    context: NetworkContext<'_>,
 ) -> (HarnessView, Vec<Check>) {
     let probe = probe_target(harness, manifest);
     let (binary_check, installed) = inspect_binary(harness);
     let (config_check, configured) = inspect_config(harness, &probe);
     let ownership_check = inspect_ownership(harness, &probe, manifest);
     let shadowing_check = inspect_shadowing(harness, &probe);
-    let models_check = inspect_models(harness);
+    let models_check = inspect_models(harness, context.state);
     let backups_check = inspect_backups(harness, &probe, manifest);
 
     let mut checks = vec![
@@ -590,7 +713,7 @@ fn inspect_harness(
         backups_check,
     ];
     if harness == Harness::Claude {
-        checks.push(inspect_messages(configured));
+        checks.push(inspect_messages(configured, context));
     }
 
     let target = (configured || probe.entry.is_some())
@@ -1372,29 +1495,123 @@ fn inspect_kimi_shadowing(harness: Harness, probe: &TargetProbe, id: String) -> 
     }
 }
 
-fn inspect_models(harness: Harness) -> Check {
+fn inspect_models(harness: Harness, network: NetworkState<'_>) -> Check {
     let id = format!("harness.{}.models", harness.id());
-    match static_mapping(harness) {
-        Ok(ids) => Check::new(
+    let ids = match static_mapping(harness) {
+        Ok(ids) => ids,
+        Err(problems) => {
+            return Check::new(
+                id,
+                "harness",
+                Some(harness.id()),
+                Status::Fail,
+                format!(
+                    "the static model mapping is invalid: {}",
+                    problems.join("; ")
+                ),
+            )
+            .with_hint("upgrade tcamp to a release with a complete curated mapping")
+            .with_code("model_mapping");
+        }
+    };
+
+    let NetworkState::Ready { base, api_key } = network else {
+        return Check::new(
             id,
             "harness",
             Some(harness.id()),
             Status::Pass,
             format!("{} mapped model(s): {}", ids.len(), ids.join(", ")),
-        ),
-        Err(problems) => Check::new(
+        );
+    };
+
+    let outcomes = net::check_models(base, api_key, &ids);
+    let mut code = None;
+    let mut request_id = None;
+    let mut problems = Vec::new();
+    for (model, outcome) in &outcomes {
+        let Some(detail) = outcome.detail() else {
+            continue;
+        };
+        problems.push(format!("{model}: {detail}"));
+        if code.is_none() {
+            code = outcome.code().map(str::to_string);
+        }
+        if request_id.is_none() {
+            request_id = outcome.request_id().map(str::to_string);
+        }
+    }
+    if problems.is_empty() {
+        Check::new(
+            id,
+            "harness",
+            Some(harness.id()),
+            Status::Pass,
+            format!(
+                "all {} mapped model(s) found at {base}: {}",
+                ids.len(),
+                ids.join(", ")
+            ),
+        )
+    } else {
+        Check::new(
             id,
             "harness",
             Some(harness.id()),
             Status::Fail,
             format!(
-                "the static model mapping is invalid: {}",
+                "could not verify {} mapped model(s) at {base}: {}",
+                problems.len(),
                 problems.join("; ")
             ),
         )
-        .with_hint("upgrade tcamp to a release with a complete curated mapping")
-        .with_code("model_mapping"),
+        .with_hint(
+            "upgrade tcamp when the curated catalog changes, or check connectivity and the base URL",
+        )
+        .with_code(code.unwrap_or_else(|| "model_mapping".to_string()))
+        .with_request_id(request_id)
     }
+}
+
+fn inspect_messages(configured: bool, context: NetworkContext<'_>) -> Check {
+    if !configured {
+        return Check::new(
+            "harness.claude.messages",
+            "harness",
+            Some("claude"),
+            Status::Skip,
+            "not configured",
+        );
+    }
+
+    if context.verify && context.claude_only {
+        return match context.state {
+            NetworkState::Ready { base, api_key } => outcome_check(
+                "harness.claude.messages",
+                "harness",
+                Some("claude"),
+                net::verify_messages(base, api_key),
+            ),
+            skipped => skipped_check(
+                "harness.claude.messages",
+                "harness",
+                Some("claude"),
+                skipped,
+            ),
+        };
+    }
+
+    Check::new(
+        "harness.claude.messages",
+        "harness",
+        Some("claude"),
+        Status::Warn,
+        "/v1/messages capability not verified",
+    )
+    .with_hint(
+        "requires an anthropic deployment; run `tcamp doctor --verify --harness claude` to test",
+    )
+    .with_code("messages_unverified")
 }
 
 fn static_mapping(harness: Harness) -> Result<Vec<String>, Vec<String>> {
@@ -1576,29 +1793,6 @@ fn inspect_backups(
         )
         .with_code("backup_missing")
     }
-}
-
-fn inspect_messages(configured: bool) -> Check {
-    if !configured {
-        return Check::new(
-            "harness.claude.messages",
-            "harness",
-            Some("claude"),
-            Status::Skip,
-            "not configured",
-        );
-    }
-    Check::new(
-        "harness.claude.messages",
-        "harness",
-        Some("claude"),
-        Status::Warn,
-        "/v1/messages capability not verified",
-    )
-    .with_hint(
-        "requires an anthropic deployment; run `tcamp doctor --verify --harness claude` to test",
-    )
-    .with_code("messages_unverified")
 }
 
 fn summarize(checks: &[Check]) -> Summary {

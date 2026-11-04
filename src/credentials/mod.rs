@@ -1,5 +1,5 @@
 mod base_url;
-mod probe;
+pub(crate) mod probe;
 mod store;
 
 use std::env;
@@ -461,7 +461,7 @@ fn run_verification(
 ) -> Result<(String, Vec<Warning>), VerificationFailure> {
     let mut warnings = Vec::new();
     match probe::probe(base_url, api_key) {
-        ProbeResult::Verified { warning } => {
+        ProbeResult::Verified { warning, .. } => {
             if let Some(warning) = warning {
                 warnings.push(warning);
             }

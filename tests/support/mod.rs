@@ -271,6 +271,7 @@ pub struct MockResponse {
     pub content_type: &'static str,
     pub body: String,
     pub headers: Vec<(String, String)>,
+    pub delay: Option<Duration>,
 }
 
 impl MockResponse {
@@ -281,6 +282,7 @@ impl MockResponse {
             content_type: "application/json",
             body: body.into(),
             headers: Vec::new(),
+            delay: None,
         }
     }
 
@@ -291,11 +293,17 @@ impl MockResponse {
             content_type: "text/plain",
             body: String::new(),
             headers: Vec::new(),
+            delay: None,
         }
     }
 
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
         self
     }
 }
@@ -376,7 +384,7 @@ impl ResponsePlan {
             }
             Self::Routed(routes) => routes
                 .iter()
-                .find(|(route, _)| *route == path)
+                .find(|(route, _)| route_matches(route, path))
                 .map(|(_, response)| response.clone())
                 .unwrap_or_else(|| MockResponse::json(404, r#"{"error":{"code":"not_found"}}"#)),
         }
@@ -459,6 +467,13 @@ impl Drop for MockServer {
     }
 }
 
+fn route_matches(route: &str, path: &str) -> bool {
+    match route.strip_suffix('*') {
+        Some(prefix) => path.starts_with(prefix),
+        None => route == path,
+    }
+}
+
 fn handle_connection(
     mut stream: TcpStream,
     plan: &ResponsePlan,
@@ -507,6 +522,9 @@ fn handle_connection(
             headers,
             body: String::from_utf8_lossy(&body).into_owned(),
         });
+    if let Some(delay) = response.delay {
+        thread::sleep(delay);
+    }
 
     let mut response_bytes = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",

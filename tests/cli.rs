@@ -274,7 +274,7 @@ fn arguments_after_double_dash_are_passed_through() {
 }
 
 #[test]
-fn offline_commands_make_no_network_requests() {
+fn commands_without_a_key_make_no_network_requests() {
     let env = TestEnv::new();
     let server = MockServer::start(MockResponse::json(200, "{}"));
 
@@ -288,7 +288,7 @@ fn offline_commands_make_no_network_requests() {
         .env("TOKENCAMP_BASE_URL", server.url(""))
         .args(["doctor", "--network"])
         .assert()
-        .code(2);
+        .code(1);
 
     env.command()
         .env("TOKENCAMP_BASE_URL", server.url(""))
