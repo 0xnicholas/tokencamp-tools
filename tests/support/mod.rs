@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
 #[cfg(unix)]
+pub mod dist;
+
+#[cfg(unix)]
 pub mod pty;
 
 use std::fs;
