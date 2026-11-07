@@ -6,7 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use jsonc_parser::ParseOptions;
-use jsonc_parser::cst::{CstArray, CstInputValue, CstObject, CstRootNode};
+use jsonc_parser::cst::{
+    CstArray, CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstObject, CstObjectProp,
+    CstRootNode,
+};
 use serde::Deserialize;
 use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde_json::Value;
@@ -475,7 +478,7 @@ pub fn plan_removal(
     let meaningful = document
         .properties()
         .iter()
-        .any(|property| property.decoded_name().as_deref() != Some("$schema"));
+        .any(|property| property_name(property).as_deref() != Some("$schema"));
     if !meaningful && entry.is_some_and(|entry| entry.created_file) && !existing.resolved.symlink {
         return Ok(Removal::delete("models.json"));
     }
@@ -678,7 +681,7 @@ fn string_property(object: &CstObject, name: &str) -> Option<String> {
 }
 
 fn value_property(object: &CstObject, name: &str) -> Option<Value> {
-    object.get(name)?.value()?.to_serde_value()
+    node_to_serde(&object.get(name)?.value()?)
 }
 
 pub fn unowned_conflict(path: &Path) -> TcampError {
@@ -731,7 +734,7 @@ pub fn merge_settings(existing: Option<&[u8]>, path: &Path) -> Result<SettingsMe
     ] {
         let empty = match document.get(name) {
             None => true,
-            Some(property) => match property.value().and_then(|value| value.to_serde_value()) {
+            Some(property) => match property.value().and_then(|value| node_to_serde(&value)) {
                 None | Some(Value::Null) => true,
                 Some(Value::String(value)) => value.trim().is_empty(),
                 Some(_) => false,
@@ -776,13 +779,41 @@ fn strict_options() -> ParseOptions {
         allow_comments: false,
         allow_loose_object_property_names: false,
         allow_trailing_commas: false,
-        allow_missing_commas: false,
-        allow_single_quoted_strings: false,
-        allow_hexadecimal_numbers: false,
-        allow_unary_plus_numbers: false,
-        allow_bare_decimal_point_numbers: false,
-        allow_non_finite_numbers: false,
-        allow_extended_string_escapes: false,
+    }
+}
+
+fn property_name(property: &CstObjectProp) -> Option<String> {
+    property.name()?.decoded_value().ok()
+}
+
+fn node_to_serde(node: &CstNode) -> Option<Value> {
+    match node {
+        CstNode::Container(CstContainerNode::Object(object)) => {
+            let mut map = serde_json::Map::new();
+            for property in object.properties() {
+                let Some(name) = property_name(&property) else {
+                    continue;
+                };
+                let Some(value) = property.value().and_then(|value| node_to_serde(&value)) else {
+                    continue;
+                };
+                map.insert(name, value);
+            }
+            Some(Value::Object(map))
+        }
+        CstNode::Container(CstContainerNode::Array(array)) => Some(Value::Array(
+            array.elements().iter().filter_map(node_to_serde).collect(),
+        )),
+        CstNode::Leaf(CstLeafNode::BooleanLit(value)) => Some(Value::Bool(value.value())),
+        CstNode::Leaf(CstLeafNode::NullKeyword(_)) => Some(Value::Null),
+        CstNode::Leaf(CstLeafNode::NumberLit(value)) => value.to_string().parse().ok(),
+        CstNode::Leaf(CstLeafNode::StringLit(value)) => {
+            value.decoded_value().ok().map(Value::String)
+        }
+        // JSONC values are containers or these literal leaves; root, property,
+        // token, whitespace, comment, and word-literal nodes cannot appear in a
+        // value position.
+        _ => None,
     }
 }
 
