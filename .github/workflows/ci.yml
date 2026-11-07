@@ -29,6 +29,14 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  msrv:
+    name: msrv (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo check --all-targets --locked
+
   install-smoke:
     name: install-smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -52,6 +60,7 @@ jobs:
           sh -n install.sh
           sh -n scripts/package.sh
           sh -n scripts/install-smoke.sh
-          shellcheck install.sh scripts/package.sh scripts/install-smoke.sh
+          sh -n scripts/check-release-gates.sh
+          shellcheck install.sh scripts/package.sh scripts/install-smoke.sh scripts/check-release-gates.sh
       - name: Install smoke test
         run: sh scripts/install-smoke.sh
