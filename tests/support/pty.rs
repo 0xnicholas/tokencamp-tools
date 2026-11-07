@@ -112,7 +112,7 @@ fn open_pty() -> (RawFd, RawFd) {
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut window,
+            std::ptr::addr_of_mut!(window),
         )
     };
     assert_eq!(result, 0, "openpty failed: {}", io::Error::last_os_error());
