@@ -156,7 +156,7 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | COMPAT-01 | 2026-11-07 | macOS 13.7.8 x86_64 | Claude not installed | — | blocked | — | `claude` is not installed. With real Claude 2.1.304 and 2.1.316, run `tcamp claude --no-launch` and `tcamp claude`; verify the overlay parses, `--settings` takes effect, user settings are untouched, and shadowing detection is correct. No live `/v1/messages` request is required. |
 | COMPAT-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Pi 1.5.0 | `sk-...cdef` (synthetic) | pass | — | Real Pi 1.5.0 in a temp HOME/PI_CODING_AGENT_DIR: `pi --list-models --offline` listed all five tokencamp models; `tcamp pi -- --version` printed 1.5.0; no network request. Floor 1.4.0 was not installed. |
 | COMPAT-03 | 2026-11-07 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | `sk-...cdef` (synthetic) | pass | — | Real Kimi 2.1.1 in a temp HOME/KIMI_CODE_HOME: `kimi doctor config` reported `config.toml` valid; `kimi provider list` showed `tokencamp type=openai models=5`; `tcamp kimi -- --version` printed 2.1.1; no network request. |
-| COMPAT-04 | 2026-11-07 | macOS 13.7.8 x86_64; macOS arm64 + Linux x86_64 CI | n/a | n/a | pass | — | Local `cargo test` covers CFG-C-01..05 paths, 0700/0600, symlink, and flock on macOS x86_64; CI run 42370138121 is green on macos-15 arm64 and ubuntu-latest x86_64. Linux arm64 is not separately covered. |
+| COMPAT-04 | 2026-11-07 | macOS 13.7.8 x86_64; macOS arm64 + Linux x86_64 CI | n/a | n/a | pass | — | Local `cargo test` covers the generic config path, 0700/0600, symlink, and flock contracts on macOS x86_64; CI run 42370138121 is green on macos-15 arm64 and ubuntu-latest x86_64. Linux arm64 is not separately covered. |
 | DOC-01 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | README EN/ZH cover curl install, `TCAMP_VERSION`/`--version`, `SHA256SUMS`, supported platforms, `TCAMP_INSTALL_DIR`, PATH, and Gatekeeper right-click/`xattr`. |
 | DOC-02 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | Quickstart covers `tcamp login` -> `tcamp claude/pi/kimi`, first-run TTY prompt, non-TTY `missing_key`, and `--no-launch`. |
 | DOC-03 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | Configuration section covers target paths, Overlay, Ownership manifest, Drift/Conflict/`--force`, and no key in a target. |
@@ -167,10 +167,10 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 
 ## Outstanding before sign-off
 
-- SMOKE-01 and SMOKE-02 are blocked on a real tokencamp API key; they must be run in a clean HOME on the target release machine.
-- COMPAT-01 is blocked because `claude` is not installed on this machine; it must be run with real Claude 2.1.304 and 2.1.316.
-- SMOKE-03 is deferred by SPEC (ops anthropic deployment); it does not block v1.
-- The three non-host release targets and the tag-triggered release workflow were not run: `PKG-02` (other targets), `PKG-03` (full four-archive set), `PKG-06` (publish), and `NFR-02` (other targets) remain release-time checks. The release workflow enforces them on a `v*` tag.
+- The Pi and Kimi smoke rows are blocked on a real tokencamp API key; they must be run in a clean HOME on the target release machine.
+- The Claude compatibility row is blocked because `claude` is not installed on this machine; it must be run with real Claude 2.1.304 and 2.1.316.
+- The Claude smoke row is deferred by SPEC (ops anthropic deployment); it does not block v1.
+- The three non-host release targets and the tag-triggered release workflow were not run: the other-target builds, the full four-archive set, the publish job, and the size checks on other targets remain release-time checks. The release workflow enforces them on a `v*` tag.
 - PR #31 (`integration/v1` -> `main`) must be merged before tagging; the release tag must be cut from `main` because the release workflow checks that the tag is an ancestor of `origin/main`.
 - No P0/P1 priority labels exist in this repository; the release manager must confirm manually that no open P0/P1 remains.
 
