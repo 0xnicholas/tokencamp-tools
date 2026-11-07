@@ -17,9 +17,9 @@ Result vocabulary: `pass` means the runnable local portion passed; `skipped` mea
 | `cargo test --locked` | pass | 368 passed, 0 failed, 1 ignored (the release-perf test, run separately below) |
 | `cargo +1.85.0 check --all-targets --locked` | pass | MSRV 1.85.0 check completed |
 | `cargo build --release --locked` | pass | `target/release/tcamp` 4,716,304 B |
-| `sh scripts/package.sh 0.1.0 x86_64-apple-darwin target/release/tcamp /tmp/tcamp-dist` | pass | archive 2,255,573 B; entries `tcamp`, `LICENSE`; `.sha256` plus two-space `SHA256SUMS` |
-| `sh scripts/check-release-gates.sh target/release/tcamp /tmp/tcamp-dist/tcamp-0.1.0-x86_64-apple-darwin.tar.gz` | pass | p95 `--version` 7.7 ms, `--help` 8.0 ms, `status` 7.8 ms, `doctor` 7.6 ms (limits 100/100/500/500) |
-| `cargo test --locked --test perf -- --ignored` | pass | 1 passed; p95 `--version` 4.2 ms, `--help` 4.5 ms, `status` 4.6 ms, `doctor` 5.3 ms |
+| `sh scripts/package.sh 0.1.0 x86_64-apple-darwin target/release/tcamp /tmp/tcamp-dist-final` | pass | archive 2,255,574 B; entries `tcamp`, `LICENSE`; `.sha256` plus two-space `SHA256SUMS` |
+| `sh scripts/check-release-gates.sh target/release/tcamp /tmp/tcamp-dist-final/tcamp-0.1.0-x86_64-apple-darwin.tar.gz` | pass | p95 `--version` 15.2 ms, `--help` 13.8 ms, `status` 12.9 ms, `doctor` 13.3 ms (limits 100/100/500/500) |
+| `cargo test --locked --test perf -- --ignored` | pass | 1 passed; p95 `--version` 6.0 ms, `--help` 5.3 ms, `status` 6.3 ms, `doctor` 6.3 ms |
 | `sh scripts/install-smoke.sh` | pass | `install-smoke: ok`; tampered checksum refused, existing install preserved, shellcheck and `sh -n` clean |
 
 CI for the integration tip (`integration/v1` `b3e0853`, workflow run [42370138121](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42370138121)): all five jobs succeeded.
@@ -137,8 +137,8 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | skipped | skipped: no v* tag pushed. Workflow contract (tag-only, verify, four targets, ancestor, CHANGELOG, prerelease, permissions) is checked by tests/release_workflow.rs; publish not executed. |
 | PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | pass | Contract tests + CI run 42370138121 success on ubuntu-latest x86_64 and macos-15 arm64; MSRV, deny, Dependabot, minimal permissions, --locked, provenance. |
 | PKG-08 | T1 | Docs/signing | `tests/docs.rs`, `tests/release_workflow.rs` | pass | No signing/notarization; Gatekeeper/xattr docs; PVR; no CONTRIBUTING/templates; uninstall binary hint; no updater. |
-| NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | Release gates p95: --version 7.7ms, --help 8.0ms, status 7.8ms, doctor 7.6ms (limits 100/100/500/500). |
-| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | pass | 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,573 B tar.gz (2.15 MiB <=6 MiB). Host target only; other targets release-time. |
+| NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | Release gates p95: --version 15.2ms, --help 13.8ms, status 12.9ms, doctor 13.3ms (limits 100/100/500/500). |
+| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | pass | 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,574 B tar.gz (2.15 MiB <=6 MiB). Host target only; other targets release-time. |
 | NFR-03 | T1 | No telemetry | `tests/nfr.rs` | pass | Zero outbound connections for offline commands; dead proxy; static audit finds no telemetry/update/analytics. |
 | NFR-04 | T1 | Redaction | `tests/redaction.rs` | pass | Sentinel key absent from stdout/stderr/JSON/diff/backups; mask sk-...last4. |
 | NEG-01 | T1 | Codex | `tests/cli.rs` | pass | Codex exit 2, no config writes, README hint; doctor has no Codex check. |
