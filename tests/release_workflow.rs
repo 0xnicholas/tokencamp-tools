@@ -227,7 +227,7 @@ fn ci_covers_msrv_supply_chain_and_dependabot_contracts() {
     let ci = read(".github/workflows/ci.yml");
     let test_job = job_block(&ci, "test");
     assert_contains(&test_job, "ubuntu-latest");
-    assert_contains(&test_job, "macos-14");
+    assert_contains(&test_job, "macos-15");
     assert_contains(&test_job, "cargo fmt --all -- --check");
     assert_contains(
         &test_job,
