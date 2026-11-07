@@ -1,31 +1,10 @@
 #![cfg(unix)]
 mod support;
 
-use std::fs;
-
-use support::dist;
+use support::text::{assert_contains, assert_contains_ignoring_case, read};
 
 const README_EN: &str = "README.md";
 const README_ZH: &str = "README.zh-CN.md";
-
-fn read(relative: &str) -> String {
-    fs::read_to_string(dist::repo_root().join(relative))
-        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
-}
-
-fn assert_contains(haystack: &str, needle: &str) {
-    assert!(
-        haystack.contains(needle),
-        "expected document to contain {needle:?}"
-    );
-}
-
-fn assert_contains_ignoring_case(haystack: &str, needle: &str) {
-    assert!(
-        haystack.to_lowercase().contains(&needle.to_lowercase()),
-        "expected document to contain {needle:?} (case-insensitive)"
-    );
-}
 
 fn h2_headings(text: &str) -> Vec<&str> {
     text.lines()
@@ -293,6 +272,7 @@ fn readmes_use_glossary_terms_without_banned_synonyms() {
         "masking",
         "divergence",
         "named profile",
+        "coding agent",
     ] {
         assert!(
             !english.to_lowercase().contains(banned),

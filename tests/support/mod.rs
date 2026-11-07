@@ -6,6 +6,9 @@ pub mod dist;
 #[cfg(unix)]
 pub mod pty;
 
+#[cfg(unix)]
+pub mod text;
+
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};

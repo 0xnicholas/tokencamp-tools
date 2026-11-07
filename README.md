@@ -1,8 +1,8 @@
 # tcamp
 
 `tcamp` is the first Tool in the tokencamp-tools Toolkit. It is a single
-binary that configures a coding agent Harness to use tokencamp and then
-Launches it. v0.1 supports Claude Code, Pi, and Kimi Code.
+binary that configures a Harness to use tokencamp and then Launches it. v0.1
+supports Claude Code, Pi, and Kimi Code.
 
 English | [简体中文](./README.zh-CN.md)
 
@@ -39,7 +39,7 @@ the installer prints the exact `export PATH="..."` line to add; it does not
 edit your shell startup files. It never uses `sudo`, never configures a
 Harness, and does not remove quarantine automatically.
 
-To verify a download manually:
+To check a download manually:
 
 ```sh
 curl -fsSLO https://github.com/0xnicholas/tokencamp-tools/releases/download/v0.1.0/tcamp-0.1.0-aarch64-apple-darwin.tar.gz

@@ -25,5 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `SHA256SUMS`, build provenance, and `install.sh`.
 - Release gates for archive size and offline startup latency.
 
+### Changed
+
+- Pinned `jsonc-parser` to `0.26` so the crate keeps the Rust 1.85 MSRV;
+  Pi's JSONC comment, trailing-comma, and key-order preservation is unchanged.
+
 [Unreleased]: https://github.com/0xnicholas/tokencamp-tools/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/0xnicholas/tokencamp-tools/releases/tag/v0.1.0

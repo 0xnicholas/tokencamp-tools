@@ -6,7 +6,7 @@ Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo
 
 Date of this run: 2026-11-07. Worktree branch: `ticket/30-acceptance`. Integration base: `integration/v1` at `b3e0853`. The checklist is unsigned; the release manager signs after T2 is complete and no open P0/P1 remains.
 
-Result vocabulary: `pass` means the runnable local portion passed; `skipped` means the row requires a tag/release or an unavailable prerequisite and was not executed; `blocked` means a required prerequisite is missing; `fail` means an executed check failed. CI-only portions are called out in Notes.
+Result vocabulary: `pass` means the row's full expected behavior was executed locally and passed; `partial` means part of the row was executed locally and the remainder is release-only or has no direct test; `skipped` means the row requires a tag/release and was not executed; `blocked` means a required prerequisite is missing; `deferred` means the SPEC explicitly defers the row; `fail` means an executed check failed. Release-only portions are called out in Notes.
 
 ## Local T1 run
 
@@ -32,7 +32,7 @@ CI for the integration tip (`integration/v1` `b3e0853`, workflow run [4237013812
 | `install-smoke (ubuntu-latest)` | pass | 40s |
 | `install-smoke (macos-15)` | pass | 1m0s |
 
-The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The draft PR is #31 (`integration/v1` -> `main`). This checklist is a docs-only change on `ticket/30-acceptance`; the CI result above is for the code tip that this branch merges, not for a separate run of the checklist commit.
+The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The current CI definition also has a non-blocking `latency` job that records p95 measurements without failing the build; that job is not part of run 42370138121. The draft PR is #31 (`integration/v1` -> `main`). This checklist is a docs-only change on `ticket/30-acceptance`; the CI result above is for the code tip that this branch merges, not for a separate run of the checklist commit.
 
 ## T1 matrix
 
@@ -50,7 +50,7 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | AUTH-10 | T1 | Key shape | `tests/auth.rs` | pass | Shape warning only; empty/control chars exit 2; no --key flag. |
 | AUTH-11 | T1 | Corrupt/symlink | `tests/auth.rs`, `tests/doctor.rs` | pass | Corrupt/version/symlink fail; 0644 doctor fail. |
 | AUTH-12 | T1 | Atomic/concurrency | `tests/auth.rs` | pass | Two-process atomic login; injected rename failure preserves original. |
-| AUTH-13 | T1 | Logout | `tests/auth.rs` | pass | Active/named/all removal; no auto-switch; harness config untouched; restart warning. Portal-revocation wording is documented, not asserted. |
+| AUTH-13 | T1 | Logout | `tests/auth.rs` | pass | Active/named/all removal; no auto-switch; harness config untouched. Running-harness restart and immediate Portal-revocation wording is asserted in `tests/auth.rs`. |
 | AUTH-14 | T1 | Status | `tests/status.rs` | pass | Status is local only; active URL, masked key/source, verified_at, path, harness snapshot. |
 | AUTH-15 | T1 | Redaction | `tests/redaction.rs` | pass | Sentinel key absent from all output, JSON, diff, and backups. |
 | AUTH-16 | T1 | Portal hint | `tests/auth.rs`, `src/credentials/mod.rs` | pass | Self-hosted hint does not guess /keys; official-cloud portal hint is a src unit test. |
@@ -107,7 +107,7 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | CLI-08 | T1 | JSON shape | `tests/cli.rs`, `tests/doctor_json.rs`, `tests/auth.rs`, `tests/status.rs`, `tests/config_claude.rs` | pass | SPEC path absent; stable success/error shapes and dry-run changes[] asserted across the same distributed files; not every code has a dedicated case. |
 | CLI-09 | T1 | Errors | `tests/cli.rs`, `tests/auth.rs`, `tests/config_claude.rs` | pass | 2-3 line error+hint; request_id only JSON/-v; no stack/body/key. |
 | CLI-10 | T1 | Exec | `tests/cli.rs`, `tests/config_claude.rs`, `tests/config_pi.rs`, `tests/config_kimi.rs` | pass | Exec after configure; Launching stderr; -- args forwarded; no wrapper. |
-| CLI-11 | T1 | 402 | `tests/auth.rs`, `tests/doctor_network.rs` | pass | Verify-path 402 is covered by auth.rs and doctor 402 by doctor_network.rs; launch-time 402 warning has no direct test. |
+| CLI-11 | T1 | 402 | `tests/auth.rs`, `tests/doctor_network.rs` | partial | Verify-path 402 is covered by auth.rs and doctor 402 by doctor_network.rs; there is no direct launch-time 402 test because tcamp never sees the Harness runtime 402. |
 | CLI-12 | T1 | Missing harness | `tests/cli.rs`, `tests/config_claude.rs`, `tests/config_pi.rs`, `tests/config_kimi.rs`, `tests/doctor.rs` | pass | Missing harness exit 2 with install link; --no-launch writes and exits 0; doctor warn. |
 | CLI-13 | T1 | Status/uninstall | `tests/cli.rs`, `tests/uninstall.rs`, `tests/uninstall_tty.rs`, `tests/status.rs` | pass | Status local; uninstall plans, TTY/--yes, --harness, --dry-run, --force; credentials/backups/binary kept; partial failure exit 1. |
 | CLI-14 | T1 | Language/version/help | `tests/cli.rs`, `tests/docs.rs` | pass | English CLI/help; semver; quickstart; docs parity by tests/docs.rs. |
@@ -130,15 +130,15 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | MOD-05 | T1 | Precedence | `tests/models.rs`, `tests/config_claude.rs`, `tests/config_pi.rs`, `tests/config_kimi.rs` | pass | --model > env > default; empty env ignored; launch-only, config unchanged. |
 | MOD-06 | T1 | Validation | `tests/models.rs`, `tests/config_pi.rs`, `tests/config_kimi.rs`, `tests/preflight.rs` | pass | Claude canonical only; Pi/Kimi five; invalid exit 2; model 404 exit 2; network warn. |
 | PKG-01 | T1 | Crate | `tests/packaging.rs` | pass | Single package; edition 2024, MSRV 1.85, Apache-2.0, bin tcamp, release profile, lockfile. |
-| PKG-02 | T1 | Targets | `.github/workflows/release.yml`, `tests/release_workflow.rs` | pass | Local x86_64-apple-darwin built, packaged, and --version OK. Other three targets are tag-triggered release-only and were not run here; PR CI does not build them. |
-| PKG-03 | T1 | Assets | `tests/packaging.rs` | pass | Local archive contains only tcamp+LICENSE, .sha256 and two-space SHA256SUMS; full four-archive set is release-time. |
+| PKG-02 | T1 | Targets | `.github/workflows/release.yml`, `tests/release_workflow.rs` | partial | Only the host x86_64-apple-darwin target was built, packaged, and `--version` checked locally. The other three targets and their `--version` checks run in the tag-triggered release workflow. |
+| PKG-03 | T1 | Assets | `tests/packaging.rs` | partial | Local host archive contains only tcamp+LICENSE, `.sha256` and two-space `SHA256SUMS`; the full four-archive set is only produced at release time. |
 | PKG-04 | T1 | install.sh | `tests/install_sh.rs` | pass | 21 installer tests: default dir, version pin, checksum, platform, atomic replace, PATH hint, no sudo/profile/quarantine/uninstall. |
 | PKG-05 | T1 | install fail | `tests/install_sh.rs`, `scripts/install-smoke.sh`, `.github/workflows/ci.yml` | pass | install-smoke covers tampered checksum, existing install preservation, temp cleanup, shellcheck/sh -n. |
-| PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | skipped | skipped: no v* tag pushed. Workflow contract (tag-only, verify, four targets, ancestor, CHANGELOG, prerelease, permissions) is checked by tests/release_workflow.rs; publish not executed. |
-| PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | pass | Contract tests + CI run 42370138121 success on ubuntu-latest x86_64 and macos-15 arm64; MSRV, deny, Dependabot, minimal permissions, --locked, provenance. |
+| PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | skipped | No `v*` tag was pushed. Workflow contract (tag-only, verify, four targets, per-target `--version`, ancestor, CHANGELOG, prerelease, permissions) is checked by tests/release_workflow.rs; publish not executed. |
+| PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | skipped | Provenance and release immutability only run on a tag release; no `v*` tag was pushed. Contract tests pass and CI run 42370138121 is green, but the tag-only checks were not executed here. |
 | PKG-08 | T1 | Docs/signing | `tests/docs.rs`, `tests/release_workflow.rs` | pass | No signing/notarization; Gatekeeper/xattr docs; PVR; no CONTRIBUTING/templates; uninstall binary hint; no updater. |
 | NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | Release gates p95: --version 15.2ms, --help 13.8ms, status 12.9ms, doctor 13.3ms (limits 100/100/500/500). |
-| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | pass | 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,574 B tar.gz (2.15 MiB <=6 MiB). Host target only; other targets release-time. |
+| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | partial | Host x86_64-apple-darwin size measured: 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,574 B tar.gz (2.15 MiB <=6 MiB). The other targets are measured only at release time. |
 | NFR-03 | T1 | No telemetry | `tests/nfr.rs` | pass | Zero outbound connections for offline commands; dead proxy; static audit finds no telemetry/update/analytics. |
 | NFR-04 | T1 | Redaction | `tests/redaction.rs` | pass | Sentinel key absent from stdout/stderr/JSON/diff/backups; mask sk-...last4. |
 | NEG-01 | T1 | Codex | `tests/cli.rs` | pass | Codex exit 2, no config writes, README hint; doctor has no Codex check. |
@@ -154,7 +154,7 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | SMOKE-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | — (no real key) | blocked | — | No real tokencamp API key is available in this environment (`TOKENCAMP_API_KEY` absent). Run in a clean HOME/XDG/KIMI_CODE_HOME with Kimi on PATH: `printf '%s' "$TOKENCAMP_API_KEY" \| tcamp login --key-stdin && tcamp kimi --no-launch && tcamp kimi -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'` Expect exit 0, `TCAMP_SMOKE_OK` on stdout, no `error:` on stderr, and a single run under $0.01. |
 | SMOKE-03 | 2026-11-07 | — | Claude (not installed) | — | deferred | — | Deferred by SPEC: trigger is ops adding an anthropic deployment (`deepseek/deepseek-v4.1-flash` or `deepseek/deepseek-v4-pro`, base URL `https://api.deepseek.com/anthropic`); owner is the release manager/ops. Not blocking v1. When unblocked, run `tcamp claude --no-launch` then `tcamp claude -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'`. |
 | COMPAT-01 | 2026-11-07 | macOS 13.7.8 x86_64 | Claude not installed | — | blocked | — | `claude` is not installed. With real Claude 2.1.304 and 2.1.316, run `tcamp claude --no-launch` and `tcamp claude`; verify the overlay parses, `--settings` takes effect, user settings are untouched, and shadowing detection is correct. No live `/v1/messages` request is required. |
-| COMPAT-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Pi 1.5.0 | `sk-...cdef` (synthetic) | pass | — | Real Pi 1.5.0 in a temp HOME/PI_CODING_AGENT_DIR: `pi --list-models --offline` listed all five tokencamp models; `tcamp pi -- --version` printed 1.5.0; no network request. Floor 1.4.0 was not installed. |
+| COMPAT-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Pi 1.5.0 | `sk-...cdef` (synthetic) | pass | — | Pass for the installed Pi 1.5.0. Real Pi 1.5.0 in a temp HOME/PI_CODING_AGENT_DIR: `pi --list-models --offline` listed all five tokencamp models; `tcamp pi -- --version` printed 1.5.0; no network request. The 1.4.0 floor was not installed. |
 | COMPAT-03 | 2026-11-07 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | `sk-...cdef` (synthetic) | pass | — | Real Kimi 2.1.1 in a temp HOME/KIMI_CODE_HOME: `kimi doctor config` reported `config.toml` valid; `kimi provider list` showed `tokencamp type=openai models=5`; `tcamp kimi -- --version` printed 2.1.1; no network request. |
 | COMPAT-04 | 2026-11-07 | macOS 13.7.8 x86_64; macOS arm64 + Linux x86_64 CI | n/a | n/a | pass | — | Local `cargo test` covers the generic config path, 0700/0600, symlink, and flock contracts on macOS x86_64; CI run 42370138121 is green on macos-15 arm64 and ubuntu-latest x86_64. Linux arm64 is not separately covered. |
 | DOC-01 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | README EN/ZH cover curl install, `TCAMP_VERSION`/`--version`, `SHA256SUMS`, supported platforms, `TCAMP_INSTALL_DIR`, PATH, and Gatekeeper right-click/`xattr`. |
@@ -165,12 +165,18 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | DOC-06 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | Uninstall section covers cleanup, keeping credentials/backups, `rm "$(command -v tcamp)"`, and no updater. |
 | DOC-07 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | README EN/ZH have eight aligned H2 sections; GLOSSARY terms are used, banned synonyms are absent (`tests/docs.rs`), and CLI output stays English. |
 
+## Known deviations
+
+- CI uses `macos-15` (arm64) instead of the SPEC's `macos-14`: `macos-14` jobs were cancelled before runner assignment, and `macos-15` is the available arm64 image. Coverage remains macOS arm64.
+- The SPEC evidence paths `tests/config_common.rs` and `tests/cli_json.rs` do not exist as standalone files; their coverage is distributed across the adapter suites and `tests/cli.rs`, `tests/doctor_json.rs`, `tests/auth.rs`, `tests/status.rs`, and `tests/config_claude.rs`, as noted row by row.
+- T2 smoke, real-Harness compatibility, documentation review, and release-manager sign-off remain manual; they are not part of the deterministic suite.
+
 ## Outstanding before sign-off
 
 - The Pi and Kimi smoke rows are blocked on a real tokencamp API key; they must be run in a clean HOME on the target release machine.
 - The Claude compatibility row is blocked because `claude` is not installed on this machine; it must be run with real Claude 2.1.304 and 2.1.316.
 - The Claude smoke row is deferred by SPEC (ops anthropic deployment); it does not block v1.
-- The three non-host release targets and the tag-triggered release workflow were not run: the other-target builds, the full four-archive set, the publish job, and the size checks on other targets remain release-time checks. The release workflow enforces them on a `v*` tag.
+- The three non-host release targets and the tag-triggered release workflow were not run: the other-target builds and their `--version` checks, the full four-archive set, the publish job, and the size checks on other targets remain release-time checks. The release workflow enforces them on a `v*` tag.
 - PR #31 (`integration/v1` -> `main`) must be merged before tagging; the release tag must be cut from `main` because the release workflow checks that the tag is an ancestor of `origin/main`.
 - No P0/P1 priority labels exist in this repository; the release manager must confirm manually that no open P0/P1 remains.
 

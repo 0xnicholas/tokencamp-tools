@@ -37,7 +37,7 @@ curl -fsSL https://github.com/0xnicholas/tokencamp-tools/releases/latest/downloa
 `PATH` 中，安装器会打印需要添加的 `export PATH="..."` 行；它不会修改 shell
 启动文件，不使用 `sudo`，不配置任何 Harness，也不会自动移除 quarantine。
 
-手动校验下载：
+手动检查下载：
 
 ```sh
 curl -fsSLO https://github.com/0xnicholas/tokencamp-tools/releases/download/v0.1.0/tcamp-0.1.0-aarch64-apple-darwin.tar.gz

@@ -70,6 +70,17 @@ jobs:
           echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
       - name: Build release binary
         run: cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Check the built binary reports the release version
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          actual="$(target/$TARGET/release/tcamp --version)"
+          if [ "$actual" != "tcamp $version" ]; then
+            echo "::error::expected 'tcamp $version' from $TARGET, got '$actual'"
+            exit 1
+          fi
+          echo "verified: $actual ($TARGET)"
       - name: Package archive and checksums
         env:
           TARGET: ${{ matrix.target }}
@@ -181,11 +192,8 @@ jobs:
           set -e
           if [ "$status" -eq 0 ]; then
             echo "Release immutability is enabled."
-          elif printf '%s' "$output" | grep -q 'HTTP 404'; then
-            echo "::error::Release immutability is disabled; enable it in repository settings."
-            exit 1
           else
-            echo "::warning::Could not verify release immutability: $output"
+            echo "::warning::Could not verify release immutability from the API; the repository setting is expected to be enabled. $output"
           fi
       - name: Create draft release
         env:

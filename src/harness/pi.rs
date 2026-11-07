@@ -788,40 +788,32 @@ fn property_name(property: &CstObjectProp) -> Option<String> {
 
 fn node_to_serde(node: &CstNode) -> Option<Value> {
     match node {
-        CstNode::Container(container) => match container {
-            CstContainerNode::Root(root) => root.value().and_then(|value| node_to_serde(&value)),
-            CstContainerNode::Object(object) => {
-                let mut map = serde_json::Map::new();
-                for property in object.properties() {
-                    let Some(name) = property_name(&property) else {
-                        continue;
-                    };
-                    let Some(value) = property.value().and_then(|value| node_to_serde(&value))
-                    else {
-                        continue;
-                    };
-                    map.insert(name, value);
-                }
-                Some(Value::Object(map))
+        CstNode::Container(CstContainerNode::Object(object)) => {
+            let mut map = serde_json::Map::new();
+            for property in object.properties() {
+                let Some(name) = property_name(&property) else {
+                    continue;
+                };
+                let Some(value) = property.value().and_then(|value| node_to_serde(&value)) else {
+                    continue;
+                };
+                map.insert(name, value);
             }
-            CstContainerNode::Array(array) => Some(Value::Array(
-                array.elements().iter().filter_map(node_to_serde).collect(),
-            )),
-            CstContainerNode::ObjectProp(property) => {
-                property.value().and_then(|value| node_to_serde(&value))
-            }
-        },
-        CstNode::Leaf(leaf) => match leaf {
-            CstLeafNode::BooleanLit(value) => Some(Value::Bool(value.value())),
-            CstLeafNode::NullKeyword(_) => Some(Value::Null),
-            CstLeafNode::NumberLit(value) => value.to_string().parse().ok(),
-            CstLeafNode::StringLit(value) => value.decoded_value().ok().map(Value::String),
-            CstLeafNode::WordLit(_)
-            | CstLeafNode::Token(_)
-            | CstLeafNode::Whitespace(_)
-            | CstLeafNode::Newline(_)
-            | CstLeafNode::Comment(_) => None,
-        },
+            Some(Value::Object(map))
+        }
+        CstNode::Container(CstContainerNode::Array(array)) => Some(Value::Array(
+            array.elements().iter().filter_map(node_to_serde).collect(),
+        )),
+        CstNode::Leaf(CstLeafNode::BooleanLit(value)) => Some(Value::Bool(value.value())),
+        CstNode::Leaf(CstLeafNode::NullKeyword(_)) => Some(Value::Null),
+        CstNode::Leaf(CstLeafNode::NumberLit(value)) => value.to_string().parse().ok(),
+        CstNode::Leaf(CstLeafNode::StringLit(value)) => {
+            value.decoded_value().ok().map(Value::String)
+        }
+        // JSONC values are containers or these literal leaves; root, property,
+        // token, whitespace, comment, and word-literal nodes cannot appear in a
+        // value position.
+        _ => None,
     }
 }
 

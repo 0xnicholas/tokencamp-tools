@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use support::dist;
+use support::text::{assert_absent, assert_contains, read};
 
 const TARGETS: [&str; 4] = [
     "aarch64-apple-darwin",
@@ -12,11 +13,6 @@ const TARGETS: [&str; 4] = [
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
 ];
-
-fn read(relative: &str) -> String {
-    fs::read_to_string(dist::repo_root().join(relative))
-        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
-}
 
 fn top_level_block(text: &str, key: &str) -> String {
     let header = format!("{key}:");
@@ -61,20 +57,6 @@ fn job_block(workflow: &str, job: &str) -> String {
     }
     assert!(inside, "missing job `{job}`");
     block
-}
-
-fn assert_contains(haystack: &str, needle: &str) {
-    assert!(
-        haystack.contains(needle),
-        "expected workflow text to contain {needle:?}:\n{haystack}"
-    );
-}
-
-fn assert_absent(haystack: &str, needle: &str) {
-    assert!(
-        !haystack.contains(needle),
-        "expected workflow text not to contain {needle:?}"
-    );
 }
 
 fn workflow_files() -> Vec<(String, String)> {
@@ -142,6 +124,8 @@ fn release_workflow_verifies_and_builds_every_target_with_release_gates() {
     assert_contains(&build, "MACOSX_DEPLOYMENT_TARGET");
     assert_contains(&build, "11.0");
     assert_contains(&build, "cargo build --release --locked --target");
+    assert_contains(&build, "target/$TARGET/release/tcamp --version");
+    assert_contains(&build, "tcamp $version");
     assert_contains(&build, "scripts/package.sh");
     assert_contains(&build, "scripts/check-release-gates.sh");
     assert_contains(&build, "actions/upload-artifact@v");
@@ -228,6 +212,7 @@ fn ci_covers_msrv_supply_chain_and_dependabot_contracts() {
     let test_job = job_block(&ci, "test");
     assert_contains(&test_job, "ubuntu-latest");
     assert_contains(&test_job, "macos-15");
+    assert_contains(&ci, "macos-14 jobs are cancelled");
     assert_contains(&test_job, "cargo fmt --all -- --check");
     assert_contains(
         &test_job,
@@ -275,6 +260,44 @@ fn ci_covers_msrv_supply_chain_and_dependabot_contracts() {
         2,
         "both ecosystems must use grouped updates"
     );
+}
+
+#[test]
+fn ci_records_latency_without_blocking_the_build() {
+    let ci = read(".github/workflows/ci.yml");
+    let latency = job_block(&ci, "latency");
+    assert_contains(&latency, "runs-on: ubuntu-latest");
+    assert_contains(&latency, "continue-on-error: true");
+    assert_contains(&latency, "cargo build --release --locked");
+    assert_contains(&latency, "scripts/package.sh");
+    assert_contains(&latency, "scripts/check-release-gates.sh");
+    assert_contains(&latency, "TCAMP_STARTUP_P95_LIMIT_MS=10000");
+    assert_contains(&latency, "TCAMP_OFFLINE_P95_LIMIT_MS=10000");
+    assert_contains(&latency, "TCAMP_LATENCY_SAMPLES=10");
+    assert_contains(&latency, "shellcheck");
+    assert_contains(&latency, "sh -n scripts/check-release-gates.sh");
+    assert_absent(&latency, "exit 1");
+    assert_absent(&latency, "::error::");
+}
+
+#[test]
+fn release_immutability_check_never_fails_the_release() {
+    let workflow = read(".github/workflows/release.yml");
+    let publish = job_block(&workflow, "publish");
+    let start = publish
+        .find("Check release immutability")
+        .expect("publish must check release immutability");
+    let rest = &publish[start..];
+    let end = rest
+        .find("Create draft release")
+        .expect("immutability check must precede the release");
+    let step = &rest[..end];
+
+    assert_contains(step, "immutable-releases");
+    assert_contains(step, "::warning::");
+    assert_contains(step, "Could not verify release immutability");
+    assert_absent(step, "::error::");
+    assert_absent(step, "exit 1");
 }
 
 #[test]

@@ -671,7 +671,18 @@ fn logout_removes_active_or_named_connections_without_switching() {
     assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
     let value = json_output(&output);
     assert_eq!(value["base_url"], "https://c.test");
-    warning(&value, "harness_restart_required");
+    let restart = warning(&value, "harness_restart_required");
+    let message = restart["message"]
+        .as_str()
+        .expect("restart warning must carry a message");
+    assert!(
+        message.contains("running harnesses keep the old API key until restarted"),
+        "logout must say running harnesses keep the old key until restart: {message}"
+    );
+    assert!(
+        message.contains("Portal") && message.contains("immediately"),
+        "logout must say Portal revocation takes effect immediately: {message}"
+    );
     let document = credentials(&env);
     assert!(document.get("active").is_none());
     let connections = document["connections"].as_table().unwrap();
