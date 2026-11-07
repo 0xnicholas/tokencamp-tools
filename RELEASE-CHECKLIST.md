@@ -4,7 +4,7 @@ Acceptance tier: v1 release (Tier T1 automated matrix + Tier T2 manual smoke, co
 
 Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo 1.98.1, stable toolchain plus Rust 1.85.0. CI: `ubuntu-latest` x86_64 and `macos-15` arm64. The SPEC matrix totals 121 rows: 107 T1 rows are in the T1 table below and 14 T2 rows (SMOKE 3, COMPAT 4, DOC 7) are in the T2 table. T2 is manual and requires real Harness binaries and a real tokencamp API key; it cannot be completed by the deterministic suite.
 
-Date of this run: 2026-11-07. Worktree branch: `ticket/30-acceptance`. Integration base: `integration/v1` at `b3e0853`. The checklist is unsigned; the release manager signs after T2 is complete and no open P0/P1 remains.
+Date of this run: 2026-11-07. Branch: `integration/v1` at `896c25e`. The checklist is unsigned; the release manager signs after T2 is complete and no open P0/P1 remains.
 
 Result vocabulary: `pass` means the row's full expected behavior was executed locally and passed; `partial` means part of the row was executed locally and the remainder is release-only or has no direct test; `skipped` means the row requires a tag/release and was not executed; `blocked` means a required prerequisite is missing; `deferred` means the SPEC explicitly defers the row; `fail` means an executed check failed. Release-only portions are called out in Notes.
 
@@ -14,7 +14,7 @@ Result vocabulary: `pass` means the row's full expected behavior was executed lo
 | --- | --- | --- |
 | `cargo fmt --all -- --check` | pass | 0 diffs |
 | `cargo clippy --all-targets --locked -- -D warnings` | pass | 0 warnings |
-| `cargo test --locked` | pass | 368 passed, 0 failed, 1 ignored (the release-perf test, run separately below) |
+| `cargo test --locked` | pass | 370 passed, 0 failed, 1 ignored (the release-perf test, run separately below) |
 | `cargo +1.85.0 check --all-targets --locked` | pass | MSRV 1.85.0 check completed |
 | `cargo build --release --locked` | pass | `target/release/tcamp` 4,716,304 B |
 | `sh scripts/package.sh 0.1.0 x86_64-apple-darwin target/release/tcamp /tmp/tcamp-dist-final` | pass | archive 2,255,574 B; entries `tcamp`, `LICENSE`; `.sha256` plus two-space `SHA256SUMS` |
@@ -22,17 +22,18 @@ Result vocabulary: `pass` means the row's full expected behavior was executed lo
 | `cargo test --locked --test perf -- --ignored` | pass | 1 passed; p95 `--version` 6.0 ms, `--help` 5.3 ms, `status` 6.3 ms, `doctor` 6.3 ms |
 | `sh scripts/install-smoke.sh` | pass | `install-smoke: ok`; tampered checksum refused, existing install preserved, shellcheck and `sh -n` clean |
 
-CI for the integration tip (`integration/v1` `b3e0853`, workflow run [42370138121](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42370138121)): all five jobs succeeded.
+CI for the integration tip (`integration/v1` `896c25e`, workflow run [42372338359](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42372338359)): all six jobs succeeded.
 
 | CI job | Result | Duration |
 | --- | --- | --- |
-| `test (ubuntu-latest)` | pass | 1m12s |
-| `test (macos-15)` | pass | 1m54s |
-| `msrv (1.85)` | pass | 39s |
-| `install-smoke (ubuntu-latest)` | pass | 40s |
-| `install-smoke (macos-15)` | pass | 1m0s |
+| `test (ubuntu-latest)` | pass | 1m35s |
+| `test (macos-15)` | pass | 1m30s |
+| `msrv (1.85)` | pass | 28s |
+| `install-smoke (ubuntu-latest)` | pass | 39s |
+| `install-smoke (macos-15)` | pass | 1m1s |
+| `latency (record only)` | pass | 48s; p95 `--version` 1.3 ms, `--help` 1.2 ms, `status` 1.3 ms, `doctor` 1.3 ms |
 
-The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The current CI definition also has a non-blocking `latency` job that records p95 measurements without failing the build; that job is not part of run 42370138121. The draft PR is #31 (`integration/v1` -> `main`). This checklist is a docs-only change on `ticket/30-acceptance`; the CI result above is for the code tip that this branch merges, not for a separate run of the checklist commit.
+The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label because `macos-14` jobs are cancelled before a runner is assigned. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The draft PR is #31 (`integration/v1` -> `main`). This checklist change is docs-only; the CI result above is for code tip `896c25e`.
 
 ## T1 matrix
 
