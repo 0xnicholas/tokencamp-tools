@@ -354,6 +354,47 @@ fn release_gate_script_rejects_slow_startup() {
 }
 
 #[test]
+fn release_scope_excludes_windows_and_tokencamp_pro_coupling() {
+    let workflow = fs::read_to_string(dist::repo_root().join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+    for forbidden in ["windows", "msvc", "i686"] {
+        assert!(
+            !workflow.to_ascii_lowercase().contains(forbidden),
+            "release workflow must not build {forbidden} artifacts"
+        );
+    }
+
+    let mut files = Vec::new();
+    for directory in ["src", "scripts", ".github/workflows"] {
+        collect_files(&dist::repo_root().join(directory), &mut files);
+    }
+    for path in files {
+        let contents = fs::read_to_string(&path).expect("read scope file");
+        assert!(
+            !contents.contains("tokencamp-pro"),
+            "{} must not couple tcamp to tokencamp-pro",
+            path.display()
+        );
+    }
+
+    let manifest = fs::read_to_string(dist::repo_root().join("Cargo.toml")).expect("read manifest");
+    assert!(
+        !manifest.contains("tokencamp-pro"),
+        "Cargo.toml must not depend on tokencamp-pro"
+    );
+}
+
+fn collect_files(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+    if path.is_dir() {
+        for entry in fs::read_dir(path).expect("read scope directory") {
+            collect_files(&entry.expect("scope entry").path(), files);
+        }
+        return;
+    }
+    files.push(path.to_path_buf());
+}
+
+#[test]
 fn release_gate_script_encodes_the_contract_limits() {
     let script = fs::read_to_string(dist::repo_root().join("scripts/check-release-gates.sh"))
         .expect("read release gate script");

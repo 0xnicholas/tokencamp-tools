@@ -148,9 +148,40 @@ fn codex_exits_2_with_scope_hint_and_writes_nothing() {
         ))
         .stderr(predicate::str::contains(
             "hint: Codex is not supported in v1",
-        ));
+        ))
+        .stderr(predicate::str::contains("README.md"));
 
     assert_no_files(&env);
+}
+
+#[test]
+fn doctor_and_help_do_not_expose_removed_harnesses_or_flags() {
+    let env = TestEnv::new();
+
+    env.command()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("opencode").not())
+        .stdout(predicate::str::contains("  env").not())
+        .stdout(predicate::str::contains("--project").not())
+        .stdout(predicate::str::contains("--fix").not())
+        .stdout(predicate::str::contains("--lang").not());
+
+    for args in [&["doctor"][..], &["doctor", "--json"][..]] {
+        let output = env.command().args(args).output().expect("run tcamp");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for removed in ["codex", "opencode"] {
+            assert!(
+                !text.to_ascii_lowercase().contains(removed),
+                "doctor must not inspect {removed}: {text}"
+            );
+        }
+    }
 }
 
 #[test]

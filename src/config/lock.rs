@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::path::Path;

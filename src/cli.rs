@@ -333,7 +333,7 @@ fn parse_hint(args: &[OsString], error: &clap::Error) -> String {
         ErrorKind::InvalidSubcommand => {
             let subcommand = first_subcommand(args).unwrap_or_default();
             if subcommand == "codex" {
-                "Codex is not supported in v1; supported harnesses are claude, pi, and kimi"
+                "Codex is not supported in v1; see README.md for the supported harnesses: claude, pi, and kimi"
                     .to_string()
             } else {
                 "run `tcamp help` to see available commands".to_string()
