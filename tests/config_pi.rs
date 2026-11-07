@@ -40,6 +40,7 @@ fn models_text(env: &TestEnv) -> String {
 fn models_value(env: &TestEnv) -> Value {
     jsonc_parser::parse_to_serde_value(&models_text(env), &Default::default())
         .expect("models.json is valid JSONC")
+        .expect("models.json has a root value")
 }
 
 fn settings_value(env: &TestEnv) -> Value {
