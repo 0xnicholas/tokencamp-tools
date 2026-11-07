@@ -117,8 +117,9 @@ cmp "$preserved_dir/tcamp" "$work_dir/preserved.expected" ||
 sh -n "$repo_dir/install.sh"
 sh -n "$script_dir/package.sh"
 sh -n "$script_dir/install-smoke.sh"
+sh -n "$script_dir/check-release-gates.sh"
 if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck "$repo_dir/install.sh" "$script_dir/package.sh" "$script_dir/install-smoke.sh"
+    shellcheck "$repo_dir/install.sh" "$script_dir/package.sh" "$script_dir/install-smoke.sh" "$script_dir/check-release-gates.sh"
 fi
 
 printf 'install-smoke: ok\n'
