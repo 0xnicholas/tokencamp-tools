@@ -192,3 +192,10 @@ Signed by the release manager for `v0.1.0` after explicitly accepting the blocke
 | Role | Name | Date | Tag |
 | --- | --- | --- | --- |
 | Release manager | 0xnicholas | 2026-11-08 | v0.1.0 |
+
+## Release result
+
+- Tag: `v0.1.0` at `2b2e348` (merge commit of PR #31).
+- Workflow: [run 42477876200](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42477876200) — `verify`, all four target `build` jobs, and `publish` succeeded.
+- Release: [tcamp 0.1.0](https://github.com/0xnicholas/tokencamp-tools/releases/tag/v0.1.0).
+- Assets: four `.tar.gz` targets, four `.sha256` files, `SHA256SUMS`, and `install.sh`. `shasum -a 256 -c SHA256SUMS` passed; every archive contains only `tcamp` and `LICENSE`; the x86_64 macOS binary reports `tcamp 0.1.0`.
