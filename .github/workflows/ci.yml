@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # macos-14 jobs are cancelled before runner assignment; macos-15 is the
+        # available arm64 macOS image.
+        os: [ubuntu-latest, macos-15]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,13 +31,55 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  msrv:
+    name: msrv (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo check --all-targets --locked
+
+  latency:
+    name: latency (record only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Shell script checks
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+          sh -n install.sh
+          sh -n scripts/package.sh
+          sh -n scripts/install-smoke.sh
+          sh -n scripts/check-release-gates.sh
+          shellcheck install.sh scripts/package.sh scripts/install-smoke.sh scripts/check-release-gates.sh
+      - name: Build, package, and record latency
+        run: |
+          cargo build --release --locked
+          mkdir -p dist
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          sh scripts/package.sh 0.1.0 "$target" target/release/tcamp dist
+          TCAMP_STARTUP_P95_LIMIT_MS=10000 \
+          TCAMP_OFFLINE_P95_LIMIT_MS=10000 \
+          TCAMP_LATENCY_SAMPLES=10 \
+            sh scripts/check-release-gates.sh \
+              target/release/tcamp "dist/tcamp-0.1.0-$target.tar.gz"
+
   install-smoke:
     name: install-smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # macos-14 jobs are cancelled before runner assignment; macos-15 is the
+        # available arm64 macOS image.
+        os: [ubuntu-latest, macos-15]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,6 +96,7 @@ jobs:
           sh -n install.sh
           sh -n scripts/package.sh
           sh -n scripts/install-smoke.sh
-          shellcheck install.sh scripts/package.sh scripts/install-smoke.sh
+          sh -n scripts/check-release-gates.sh
+          shellcheck install.sh scripts/package.sh scripts/install-smoke.sh scripts/check-release-gates.sh
       - name: Install smoke test
         run: sh scripts/install-smoke.sh

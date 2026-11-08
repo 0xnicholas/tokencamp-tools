@@ -1,0 +1,239 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl linker
+        if: runner.os == 'Linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      - name: Build release binary
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Check the built binary reports the release version
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          actual="$(target/$TARGET/release/tcamp --version)"
+          if [ "$actual" != "tcamp $version" ]; then
+            echo "::error::expected 'tcamp $version' from $TARGET, got '$actual'"
+            exit 1
+          fi
+          echo "verified: $actual ($TARGET)"
+      - name: Package archive and checksums
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          sh scripts/package.sh \
+            "$version" \
+            "$TARGET" \
+            "target/$TARGET/release/tcamp" \
+            dist
+      - name: Enforce release gates
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sh scripts/check-release-gates.sh \
+            "target/$TARGET/release/tcamp" \
+            "dist/tcamp-$version-$TARGET.tar.gz"
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcamp-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the tag is an ancestor of origin/main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME is not an ancestor of origin/main"
+            exit 1
+          fi
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="$RUNNER_TEMP/release-notes.md"
+          if ! awk -v header="## [$version]" '
+            index($0, header) == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found && /^\[[^]]+\]:[[:space:]]/ { exit }
+            found { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$notes"; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::error::CHANGELOG.md section for $version is empty"
+            exit 1
+          fi
+          echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify the release asset set and merge checksums
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          count=$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')
+          [ "$count" -eq 4 ] || {
+            echo "::error::expected 4 release archives, found $count"
+            exit 1
+          }
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-musl \
+            aarch64-unknown-linux-musl
+          do
+            asset="tcamp-$version-$target.tar.gz"
+            if [ ! -f "dist/$asset" ] || [ ! -f "dist/$asset.sha256" ]; then
+              echo "::error::missing release asset $asset"
+              exit 1
+            fi
+          done
+          (cd dist && cat *.tar.gz.sha256 | sort > SHA256SUMS)
+          (cd dist && sha256sum -c SHA256SUMS)
+          unexpected=$(find dist -maxdepth 1 -type f \
+            ! -name '*.tar.gz' \
+            ! -name '*.tar.gz.sha256' \
+            ! -name 'SHA256SUMS' | wc -l | tr -d ' ')
+          if [ "$unexpected" -ne 0 ]; then
+            echo "::error::unexpected files in the release asset set"
+            exit 1
+          fi
+      - name: Check release immutability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          output=$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "Release immutability is enabled."
+          else
+            echo "::warning::Could not verify release immutability from the API; the repository setting is expected to be enabled. $output"
+          fi
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease=--prerelease ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --draft \
+            --title "tcamp $version" \
+            --notes-file "$NOTES_FILE" \
+            $prerelease
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/tcamp-$version-*.tar.gz \
+            dist/tcamp-$version-*.tar.gz.sha256 \
+            dist/SHA256SUMS \
+            install.sh
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/SHA256SUMS
+            install.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease=--prerelease ;;
+          esac
+          gh release edit "$GITHUB_REF_NAME" --draft=false $prerelease

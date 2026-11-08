@@ -4,7 +4,7 @@ mod support;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use serde_json::Value;
 use support::dist;
@@ -238,4 +238,182 @@ fn merged_checksums_cover_every_archive_in_two_space_format() {
             dist::asset_name("0.1.1", &target)
         ]
     );
+}
+
+fn run_release_gates(binary: &Path, archive: &Path, envs: &[(&str, &str)]) -> Output {
+    let mut command = Command::new("sh");
+    command
+        .arg(dist::repo_root().join("scripts/check-release-gates.sh"))
+        .arg(binary)
+        .arg(archive);
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    command.output().expect("run release gates")
+}
+
+fn write_slow_fake_tcamp(path: &Path) {
+    fs::write(
+        path,
+        "#!/bin/sh\nsleep 0.05\nprintf '%s\\n' 'tcamp 0.1.0'\n",
+    )
+    .expect("write slow fake tcamp");
+    dist::make_executable(path);
+}
+
+#[test]
+fn release_gate_script_accepts_small_fast_artifacts() {
+    let temp = TempDir::new().expect("create temp dir");
+    let binary = temp.path().join("tcamp");
+    dist::write_fake_tcamp(&binary, "0.1.0");
+    let archive = temp.path().join("tcamp-0.1.0-host.tar.gz");
+    fs::write(&archive, b"archive").expect("write archive");
+
+    let output = run_release_gates(
+        &binary,
+        &archive,
+        &[
+            ("TCAMP_LATENCY_SAMPLES", "3"),
+            ("TCAMP_STARTUP_P95_LIMIT_MS", "1000"),
+            ("TCAMP_OFFLINE_P95_LIMIT_MS", "1000"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "release gates failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("release gates: ok"),
+        "release gates must report success"
+    );
+}
+
+#[test]
+fn release_gate_script_rejects_oversized_binary_and_archive() {
+    let temp = TempDir::new().expect("create temp dir");
+    let binary = temp.path().join("tcamp");
+    dist::write_fake_tcamp(&binary, "0.1.0");
+    let archive = temp.path().join("tcamp-0.1.0-host.tar.gz");
+    fs::write(&archive, b"archive").expect("write archive");
+
+    let binary_output = run_release_gates(
+        &binary,
+        &archive,
+        &[
+            ("TCAMP_MAX_BINARY_BYTES", "1"),
+            ("TCAMP_LATENCY_SAMPLES", "3"),
+        ],
+    );
+    assert!(!binary_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&binary_output.stderr).contains("binary size"),
+        "oversized binary must fail the size gate: {}",
+        String::from_utf8_lossy(&binary_output.stderr)
+    );
+
+    let archive_output = run_release_gates(
+        &binary,
+        &archive,
+        &[
+            ("TCAMP_MAX_ARCHIVE_BYTES", "1"),
+            ("TCAMP_LATENCY_SAMPLES", "3"),
+        ],
+    );
+    assert!(!archive_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&archive_output.stderr).contains("archive size"),
+        "oversized archive must fail the size gate: {}",
+        String::from_utf8_lossy(&archive_output.stderr)
+    );
+}
+
+#[test]
+fn release_gate_script_rejects_slow_startup() {
+    let temp = TempDir::new().expect("create temp dir");
+    let binary = temp.path().join("tcamp");
+    write_slow_fake_tcamp(&binary);
+    let archive = temp.path().join("tcamp-0.1.0-host.tar.gz");
+    fs::write(&archive, b"archive").expect("write archive");
+
+    let output = run_release_gates(
+        &binary,
+        &archive,
+        &[
+            ("TCAMP_LATENCY_SAMPLES", "3"),
+            ("TCAMP_STARTUP_P95_LIMIT_MS", "1"),
+            ("TCAMP_OFFLINE_P95_LIMIT_MS", "1000"),
+        ],
+    );
+    assert!(!output.status.success(), "slow startup must fail the gate");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--version") && stderr.contains("p95"),
+        "latency failure must identify the command and p95: {stderr}"
+    );
+}
+
+#[test]
+fn release_scope_excludes_windows_and_tokencamp_pro_coupling() {
+    let workflow = fs::read_to_string(dist::repo_root().join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+    for forbidden in ["windows", "msvc", "i686"] {
+        assert!(
+            !workflow.to_ascii_lowercase().contains(forbidden),
+            "release workflow must not build {forbidden} artifacts"
+        );
+    }
+
+    let mut files = Vec::new();
+    for directory in ["src", "scripts", ".github/workflows"] {
+        collect_files(&dist::repo_root().join(directory), &mut files);
+    }
+    for path in files {
+        let contents = fs::read_to_string(&path).expect("read scope file");
+        assert!(
+            !contents.contains("tokencamp-pro"),
+            "{} must not couple tcamp to tokencamp-pro",
+            path.display()
+        );
+    }
+
+    let manifest = fs::read_to_string(dist::repo_root().join("Cargo.toml")).expect("read manifest");
+    assert!(
+        !manifest.contains("tokencamp-pro"),
+        "Cargo.toml must not depend on tokencamp-pro"
+    );
+}
+
+fn collect_files(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+    if path.is_dir() {
+        for entry in fs::read_dir(path).expect("read scope directory") {
+            collect_files(&entry.expect("scope entry").path(), files);
+        }
+        return;
+    }
+    files.push(path.to_path_buf());
+}
+
+#[test]
+fn release_gate_script_encodes_the_contract_limits() {
+    let script = fs::read_to_string(dist::repo_root().join("scripts/check-release-gates.sh"))
+        .expect("read release gate script");
+    for expected in [
+        "15728640",
+        "6291456",
+        "TCAMP_STARTUP_P95_LIMIT_MS:-100",
+        "TCAMP_OFFLINE_P95_LIMIT_MS:-500",
+        "--version",
+        "--help",
+        "status",
+        "doctor",
+        "wc -c",
+        "binary size",
+        "archive size",
+    ] {
+        assert!(
+            script.contains(expected),
+            "release gate script must encode {expected:?}"
+        );
+    }
 }

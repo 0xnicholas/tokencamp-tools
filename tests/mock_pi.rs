@@ -32,7 +32,8 @@ fn the_configured_endpoint_completes_a_two_round_tool_loop() {
         &std::fs::read_to_string(env.pi_models_path()).expect("read models.json"),
         &Default::default(),
     )
-    .expect("models.json is valid JSONC");
+    .expect("models.json is valid JSONC")
+    .expect("models.json has a root value");
     let provider = &models["providers"]["tokencamp"];
     assert_eq!(provider["api"], "openai-completions");
     assert_ne!(provider["api"], "openai-responses");
