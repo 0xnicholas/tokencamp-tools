@@ -2,9 +2,9 @@
 
 Acceptance tier: v1 release (Tier T1 automated matrix + Tier T2 manual smoke, compatibility, and documentation review).
 
-Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo 1.98.1, stable toolchain plus Rust 1.85.0. CI: `ubuntu-latest` x86_64 and `macos-15` arm64. The SPEC matrix totals 121 rows: 107 T1 rows are in the T1 table below and 14 T2 rows (SMOKE 3, COMPAT 4, DOC 7) are in the T2 table. T2 is manual and requires real Harness binaries and a real tokencamp API key; it cannot be completed by the deterministic suite.
+Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo 1.98.1, stable toolchain plus Rust 1.85.0. CI: `ubuntu-latest` x86_64 and `macos-15` arm64. The SPEC matrix totals 121 rows: 107 T1 rows are in the T1 table below and 14 T2 rows (SMOKE 3, COMPAT 4, DOC 7) are in the T2 table. T2 is manual and cannot be completed by the deterministic suite. SMOKE requires a real tokencamp API key and a real Harness; COMPAT uses real Harness binaries and, because it makes no live request, a synthetic key.
 
-Date of this run: 2026-11-07. Branch: `integration/v1` at `896c25e`. The checklist is unsigned; the release manager signs after T2 is complete and no open P0/P1 remains.
+Dates: the T1 and DOC rows dated 2026-11-07 are carried from the prior run; the T1 re-measurement and the COMPAT rows were executed on 2026-11-08. Code tip: `integration/v1` at `896c25e`; CI run 42372608175 on docs tip `e73bdf4` is green. The checklist is unsigned; the release manager signs after SMOKE-01/02 are completed and no open P0/P1 remains.
 
 Result vocabulary: `pass` means the row's full expected behavior was executed locally and passed; `partial` means part of the row was executed locally and the remainder is release-only or has no direct test; `skipped` means the row requires a tag/release and was not executed; `blocked` means a required prerequisite is missing; `deferred` means the SPEC explicitly defers the row; `fail` means an executed check failed. Release-only portions are called out in Notes.
 
@@ -17,12 +17,12 @@ Result vocabulary: `pass` means the row's full expected behavior was executed lo
 | `cargo test --locked` | pass | 370 passed, 0 failed, 1 ignored (the release-perf test, run separately below) |
 | `cargo +1.85.0 check --all-targets --locked` | pass | MSRV 1.85.0 check completed |
 | `cargo build --release --locked` | pass | `target/release/tcamp` 4,716,304 B |
-| `sh scripts/package.sh 0.1.0 x86_64-apple-darwin target/release/tcamp /tmp/tcamp-dist-final` | pass | archive 2,255,574 B; entries `tcamp`, `LICENSE`; `.sha256` plus two-space `SHA256SUMS` |
-| `sh scripts/check-release-gates.sh target/release/tcamp /tmp/tcamp-dist-final/tcamp-0.1.0-x86_64-apple-darwin.tar.gz` | pass | p95 `--version` 15.2 ms, `--help` 13.8 ms, `status` 12.9 ms, `doctor` 13.3 ms (limits 100/100/500/500) |
-| `cargo test --locked --test perf -- --ignored` | pass | 1 passed; p95 `--version` 6.0 ms, `--help` 5.3 ms, `status` 6.3 ms, `doctor` 6.3 ms |
+| `sh scripts/package.sh 0.1.0 x86_64-apple-darwin target/release/tcamp /tmp/tcamp-dist-2026-11-08` | pass | archive 2,255,333 B; entries `tcamp`, `LICENSE`; `.sha256` plus two-space `SHA256SUMS` |
+| `sh scripts/check-release-gates.sh target/release/tcamp /tmp/tcamp-dist-2026-11-08/tcamp-0.1.0-x86_64-apple-darwin.tar.gz` | pass | p95 `--version` 8.5 ms, `--help` 11.4 ms, `status` 8.2 ms, `doctor` 12.8 ms (limits 100/100/500/500) |
+| `cargo test --locked --test perf -- --ignored` | pass | 1 passed; p95 `--version` 4.6 ms, `--help` 4.5 ms, `status` 5.3 ms, `doctor` 5.5 ms |
 | `sh scripts/install-smoke.sh` | pass | `install-smoke: ok`; tampered checksum refused, existing install preserved, shellcheck and `sh -n` clean |
 
-CI for the integration tip (`integration/v1` `896c25e`, workflow run [42372338359](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42372338359)): all six jobs succeeded.
+CI for the integration tip (`integration/v1` `896c25e`, workflow run [42372338359](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42372338359)) and the docs tip (`e73bdf4`, workflow run [42372608175](https://github.com/0xnicholas/tokencamp-tools/actions/runs/42372608175)): all six jobs succeeded in both runs. The table below records the `896c25e` run.
 
 | CI job | Result | Duration |
 | --- | --- | --- |
@@ -33,9 +33,11 @@ CI for the integration tip (`integration/v1` `896c25e`, workflow run [4237233835
 | `install-smoke (macos-15)` | pass | 1m1s |
 | `latency (record only)` | pass | 48s; p95 `--version` 1.3 ms, `--help` 1.2 ms, `status` 1.3 ms, `doctor` 1.3 ms |
 
-The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label because `macos-14` jobs are cancelled before a runner is assigned. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The draft PR is #31 (`integration/v1` -> `main`). This checklist change is docs-only; the CI result above is for code tip `896c25e`.
+The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `b3e0853` replaced the label because `macos-14` jobs are cancelled before a runner is assigned. The earlier run on `1dde819` was cancelled while the macOS jobs were queued, so it is not used as evidence. The draft PR is #31 (`integration/v1` -> `main`). This checklist change is docs-only; the CI results above cover code tip `896c25e` and docs tip `e73bdf4`.
 
 ## T1 matrix
+
+The canonical matrix, including each row's tier, precondition/fixture, action, and expected result, is `SPEC.md` section 5. This table records the executed result and concrete evidence for every row. `SPEC.md` assembles the decision set from #17 and the canonical matrix from #13; a scan finds no `TBD`/`TODO`/`待定` decision markers (the only match is the statement that none are allowed).
 
 | ID | Tier | Area | Evidence | Result | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -138,8 +140,8 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 | PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | skipped | No `v*` tag was pushed. Workflow contract (tag-only, verify, four targets, per-target `--version`, ancestor, CHANGELOG, prerelease, permissions) is checked by tests/release_workflow.rs; publish not executed. |
 | PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | skipped | Provenance and release immutability only run on a tag release; no `v*` tag was pushed. Contract tests pass and CI run 42370138121 is green, but the tag-only checks were not executed here. |
 | PKG-08 | T1 | Docs/signing | `tests/docs.rs`, `tests/release_workflow.rs` | pass | No signing/notarization; Gatekeeper/xattr docs; PVR; no CONTRIBUTING/templates; uninstall binary hint; no updater. |
-| NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | Release gates p95: --version 15.2ms, --help 13.8ms, status 12.9ms, doctor 13.3ms (limits 100/100/500/500). |
-| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | partial | Host x86_64-apple-darwin size measured: 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,574 B tar.gz (2.15 MiB <=6 MiB). The other targets are measured only at release time. |
+| NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | 2026-11-08 release-gate p95: --version 8.5ms, --help 11.4ms, status 8.2ms, doctor 12.8ms (limits 100/100/500/500). |
+| NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | partial | Host x86_64-apple-darwin size measured: 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,333 B tar.gz (2.15 MiB <=6 MiB). The other targets are measured only at release time. |
 | NFR-03 | T1 | No telemetry | `tests/nfr.rs` | pass | Zero outbound connections for offline commands; dead proxy; static audit finds no telemetry/update/analytics. |
 | NFR-04 | T1 | Redaction | `tests/redaction.rs` | pass | Sentinel key absent from stdout/stderr/JSON/diff/backups; mask sk-...last4. |
 | NEG-01 | T1 | Codex | `tests/cli.rs` | pass | Codex exit 2, no config writes, README hint; doctor has no Codex check. |
@@ -149,14 +151,16 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 
 ## T2 matrix (manual)
 
+Local runs on 2026-11-08 could not reach `https://api.tokencamp.com`; all model existence checks timed out and were emitted as non-blocking `model_check_failed` warnings. No live chat request succeeded.
+
 | ID | Date | OS/arch | Harness version | Key (masked) | Result | Request ID | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SMOKE-01 | 2026-11-07 | macOS 13.7.8 x86_64 | Pi 1.5.0 | — (no real key) | blocked | — | No real tokencamp API key is available in this environment (`TOKENCAMP_API_KEY` absent). Run in a clean HOME/XDG/PI_CODING_AGENT_DIR with Pi on PATH: `printf '%s' "$TOKENCAMP_API_KEY" \| tcamp login --key-stdin && tcamp pi --no-launch && tcamp pi -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'` Expect exit 0, `TCAMP_SMOKE_OK` on stdout, no `error:` on stderr, and a single run under $0.01. |
-| SMOKE-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | — (no real key) | blocked | — | No real tokencamp API key is available in this environment (`TOKENCAMP_API_KEY` absent). Run in a clean HOME/XDG/KIMI_CODE_HOME with Kimi on PATH: `printf '%s' "$TOKENCAMP_API_KEY" \| tcamp login --key-stdin && tcamp kimi --no-launch && tcamp kimi -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'` Expect exit 0, `TCAMP_SMOKE_OK` on stdout, no `error:` on stderr, and a single run under $0.01. |
-| SMOKE-03 | 2026-11-07 | — | Claude (not installed) | — | deferred | — | Deferred by SPEC: trigger is ops adding an anthropic deployment (`deepseek/deepseek-v4.1-flash` or `deepseek/deepseek-v4-pro`, base URL `https://api.deepseek.com/anthropic`); owner is the release manager/ops. Not blocking v1. When unblocked, run `tcamp claude --no-launch` then `tcamp claude -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'`. |
-| COMPAT-01 | 2026-11-07 | macOS 13.7.8 x86_64 | Claude not installed | — | blocked | — | `claude` is not installed. With real Claude 2.1.304 and 2.1.316, run `tcamp claude --no-launch` and `tcamp claude`; verify the overlay parses, `--settings` takes effect, user settings are untouched, and shadowing detection is correct. No live `/v1/messages` request is required. |
-| COMPAT-02 | 2026-11-07 | macOS 13.7.8 x86_64 | Pi 1.5.0 | `sk-...cdef` (synthetic) | pass | — | Pass for the installed Pi 1.5.0. Real Pi 1.5.0 in a temp HOME/PI_CODING_AGENT_DIR: `pi --list-models --offline` listed all five tokencamp models; `tcamp pi -- --version` printed 1.5.0; no network request. The 1.4.0 floor was not installed. |
-| COMPAT-03 | 2026-11-07 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | `sk-...cdef` (synthetic) | pass | — | Real Kimi 2.1.1 in a temp HOME/KIMI_CODE_HOME: `kimi doctor config` reported `config.toml` valid; `kimi provider list` showed `tokencamp type=openai models=5`; `tcamp kimi -- --version` printed 2.1.1; no network request. |
+| SMOKE-01 | 2026-11-08 | macOS 13.7.8 x86_64 | Pi 1.5.0 | — (no real key) | blocked | — | Rechecked 2026-11-08: no real tokencamp API key is available in this environment (`TOKENCAMP_API_KEY` absent, no credentials file), and `https://api.tokencamp.com` is unreachable (connection timeout). Run in a clean HOME/XDG/PI_CODING_AGENT_DIR with Pi on PATH: `printf '%s' "$TOKENCAMP_API_KEY" \| tcamp login --key-stdin && tcamp pi --no-launch && tcamp pi -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'` Expect exit 0, `TCAMP_SMOKE_OK` on stdout, no `error:` on stderr, and a single run under $0.01. |
+| SMOKE-02 | 2026-11-08 | macOS 13.7.8 x86_64 | Kimi 2.1.1 | — (no real key) | blocked | — | Rechecked 2026-11-08: no real tokencamp API key is available in this environment (`TOKENCAMP_API_KEY` absent, no credentials file), and `https://api.tokencamp.com` is unreachable (connection timeout). Run in a clean HOME/XDG/KIMI_CODE_HOME with Kimi on PATH: `printf '%s' "$TOKENCAMP_API_KEY" \| tcamp login --key-stdin && tcamp kimi --no-launch && tcamp kimi -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'` Expect exit 0, `TCAMP_SMOKE_OK` on stdout, no `error:` on stderr, and a single run under $0.01. |
+| SMOKE-03 | 2026-11-08 | — | Claude 2.1.316 installed for COMPAT-01 | — | deferred | — | Deferred by SPEC: trigger is ops adding an anthropic deployment (`deepseek/deepseek-v4.1-flash` or `deepseek/deepseek-v4-pro`, base URL `https://api.deepseek.com/anthropic`); owner is the release manager/ops. Not blocking v1. When unblocked, run `tcamp claude --no-launch` then `tcamp claude -- -p 'Reply with exactly TCAMP_SMOKE_OK and nothing else.'`. |
+| COMPAT-01 | 2026-11-08 | macOS 13.7.8 x86_64 | Claude 2.1.304 (commit 17ab70404e5b), 2.1.316 (commit cd7ceb459c68) | `sk-...cdef` (synthetic) | pass | — | Both real Claude Code binaries were installed with npm under `/tmp` and passed the same checks in clean temp HOME/XDG/`CLAUDE_CONFIG_DIR`. `tcamp claude --no-launch` wrote the overlay; `claude --settings <overlay> doctor` parsed it without an invalid-settings report (the malformed-JSON control reported `Invalid settings`), and `tcamp claude -- --version`/`tcamp claude -- doctor` launched through `--settings` with the overlay's custom `ANTHROPIC_BASE_URL` visible. A seeded user `settings.json` (`{"cleanupPeriodDays": 30}`, SHA-256 `22a2153d48fe60f7d8f539718d51d8be0ed5f5cbaa42c1e12b482b5d978e6891`) was unchanged after both versions; an `apiKeyHelper` made launch exit 2 while `--no-launch` only warned (project/local/managed/unreadable variants are covered by `tests/shadowing.rs`). No live `/v1/messages` request. |
+| COMPAT-02 | 2026-11-08 | macOS 13.7.8 x86_64 | Pi 1.4.0 (floor), 1.5.0 (current) | `sk-...cdef` (synthetic) | pass | — | Real Pi 1.4.0 (npm) and the installed Pi 1.5.0 both ran in clean temp HOME/PI_CODING_AGENT_DIR. `tcamp pi --no-launch` wrote `models.json` and `settings.json`; with a pre-seeded JSONC file containing a `//` comment, a trailing comma, and an unknown provider, tcamp preserved all of them; with `TOKENCAMP_API_KEY` exported, `pi --list-models --offline` listed all five tokencamp models with the configured context/max-out values; `tcamp pi -- --version` printed 1.4.0 and 1.5.0 respectively; 1.4.0 produced no below-floor warning. |
+| COMPAT-03 | 2026-11-08 | macOS 13.7.8 x86_64 | Kimi 2.1.1 (floor = current) | `sk-...cdef` (synthetic) | pass | — | Real Kimi 2.1.1 in a clean temp HOME/KIMI_CODE_HOME. `kimi doctor config` reported `config.toml` valid; `kimi provider list --json` showed `type=openai`, five aliases, and `maxOutputSize: 8192` for every alias (default `tokencamp/glm-5.3`); `tcamp kimi -- --version` printed 2.1.1. |
 | COMPAT-04 | 2026-11-07 | macOS 13.7.8 x86_64; macOS arm64 + Linux x86_64 CI | n/a | n/a | pass | — | Local `cargo test` covers the generic config path, 0700/0600, symlink, and flock contracts on macOS x86_64; CI run 42370138121 is green on macos-15 arm64 and ubuntu-latest x86_64. Linux arm64 is not separately covered. |
 | DOC-01 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | README EN/ZH cover curl install, `TCAMP_VERSION`/`--version`, `SHA256SUMS`, supported platforms, `TCAMP_INSTALL_DIR`, PATH, and Gatekeeper right-click/`xattr`. |
 | DOC-02 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | Quickstart covers `tcamp login` -> `tcamp claude/pi/kimi`, first-run TTY prompt, non-TTY `missing_key`, and `--no-launch`. |
@@ -170,20 +174,20 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 
 - CI uses `macos-15` (arm64) instead of the SPEC's `macos-14`: `macos-14` jobs were cancelled before runner assignment, and `macos-15` is the available arm64 image. Coverage remains macOS arm64.
 - The SPEC evidence paths `tests/config_common.rs` and `tests/cli_json.rs` do not exist as standalone files; their coverage is distributed across the adapter suites and `tests/cli.rs`, `tests/doctor_json.rs`, `tests/auth.rs`, `tests/status.rs`, and `tests/config_claude.rs`, as noted row by row.
-- T2 smoke, real-Harness compatibility, documentation review, and release-manager sign-off remain manual; they are not part of the deterministic suite.
+- T2 smoke, real-Harness compatibility, documentation review, and release-manager sign-off remain manual; they are not part of the deterministic suite. COMPAT-01..04 and DOC-01..07 are recorded above; SMOKE-01/02 remain blocked.
 
 ## Outstanding before sign-off
 
-- The Pi and Kimi smoke rows are blocked on a real tokencamp API key; they must be run in a clean HOME on the target release machine.
-- The Claude compatibility row is blocked because `claude` is not installed on this machine; it must be run with real Claude 2.1.304 and 2.1.316.
+- The Pi and Kimi smoke rows remain blocked on a real tokencamp API key and on reachability of `https://api.tokencamp.com`; they must be run in a clean HOME on the target release machine.
+- The Claude compatibility row is complete; no live `/v1/messages` request was required.
 - The Claude smoke row is deferred by SPEC (ops anthropic deployment); it does not block v1.
-- The three non-host release targets and the tag-triggered release workflow were not run: the other-target builds and their `--version` checks, the full four-archive set, the publish job, and the size checks on other targets remain release-time checks. The release workflow enforces them on a `v*` tag.
+- The three non-host release targets and the tag-triggered release workflow were not run: the other-target builds and their `--version` checks, the full four-archive set, the publish job (including extraction of the `## [0.1.0]` CHANGELOG section as release notes), and the size checks on other targets remain release-time checks. The release workflow enforces them on a `v*` tag.
 - PR #31 (`integration/v1` -> `main`) must be merged before tagging; the release tag must be cut from `main` because the release workflow checks that the tag is an ancestor of `origin/main`.
 - No P0/P1 priority labels exist in this repository; the release manager must confirm manually that no open P0/P1 remains.
 
 ## Release sign-off
 
-This checklist is unsigned. The release manager signs only after the blocked T2 rows are completed or explicitly accepted, the release-time checks above are green, and no open P0/P1 remains.
+This checklist is unsigned. COMPAT-01..04 and DOC-01..07 are complete; SMOKE-01/02 remain blocked on a real key and API reachability. The release manager signs only after SMOKE-01/02 are completed, the release-time checks above are green, and no open P0/P1 remains.
 
 | Role | Name | Date | Tag |
 | --- | --- | --- | --- |
