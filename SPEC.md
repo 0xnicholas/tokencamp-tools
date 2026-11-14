@@ -71,7 +71,7 @@
 29. **Claude 日常**：作为 Claude Code 用户，我希望 `tcamp claude` 配置后 Launch、`--no-launch` 只 Configure，以便融入日常。
 30. **Claude key 边界**：作为 Claude Code 用户，我希望 API key 只在 Launch 时注入，以便不落盘。
 31. **Claude 遮蔽**：作为 Claude Code 用户，我希望用户 / 项目 / managed settings 有 token 或 `apiKeyHelper` 时拒绝 Launch，以便不会用错凭据。
-32. **Claude managed 不可读**：作为 Claude Code 用户，我希望 managed settings 不可读时警告并继续、Doctor 标红，以便不阻塞但可诊断。
+32. **Claude managed 不可读**：作为 Claude Code 用户，我希望 managed settings 不可读时警告并继续、Doctor 记 warn，以便不阻塞但可诊断。
 33. **Claude 槽位**：作为 Claude Code 用户，我希望主模型和 opus / sonnet / haiku / fable Slot 都钉到 Catalog model，以便不会请求 `claude-*` 而 404。
 34. **Claude 兼容开关**：作为 Claude Code 用户，我希望 tcamp 关闭 tool search、experimental betas 和 thinking，以便避开 tokencamp 未建模的 content block。
 35. **Claude 上下文**：作为 Claude Code 用户，我希望 context 与 max output 使用保守静态值，以便不溢出。
@@ -231,7 +231,7 @@ verified_at = "2026-11-01T10:00:01Z"
 - Uninstall：只删 tcamp 创建且仍等于 last-written 的条目；用户改过的留着并警告；`--force` 才删。`--force` 接管的用户条目默认保留并警告，只有 `--force` Uninstall 才删。tcamp 创建的文件语义为空时删除；凭据、备份、二进制不动。
 - manifest 丢失时：Claude Overlay 可靠 `_tcamp` 标记清理；Pi / Kimi 不自动动，要求 `--force` 或手工。
 - Shadowing 检查：
-  - Claude：检查用户 settings（跟随 `$CLAUDE_CONFIG_DIR`，fallback `~/.claude/settings.json`）、项目 shared / local（按 cwd / git root 的 `.claude/settings.json`、`.claude/settings.local.json`）、可读的 managed settings（macOS `/Library/Application Support/ClaudeCode/managed-settings.json`，Linux `/etc/claude-code/managed-settings.json`）。任一有非空 `env.ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` → 拒绝 Launch，打印来源路径与键名，不打印值；managed 不可读 → 警告并继续，Doctor 标红；`--force` 不能绕过。
+  - Claude：检查用户 settings（跟随 `$CLAUDE_CONFIG_DIR`，fallback `~/.claude/settings.json`）、项目 shared / local（按 cwd / git root 的 `.claude/settings.json`、`.claude/settings.local.json`）、可读的 managed settings（macOS `/Library/Application Support/ClaudeCode/managed-settings.json`，Linux `/etc/claude-code/managed-settings.json`）。任一有非空 `env.ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` → 拒绝 Launch，打印来源路径与键名，不打印值；managed 不可读 → 警告并继续，Doctor 记 warn；`--force` 不能绕过。
   - Pi：只读 `$PI_CODING_AGENT_DIR/auth.json` 的顶层 provider 名，绝不读值；有 `tokencamp` → 拒绝并提示删条目或切换登录；文件损坏 → 拒绝。
   - Kimi：`[providers.tokencamp]` 有 owned 字面量 `api_key` → 备份并移除，改 `api_key_env`；unowned → Conflict / `--force`。值永不打印。
   - Shadowing 检查不因 `--force` 放行；所有读取只用于存在性或键名判断，不缓存、不落盘、不打印；`--dry-run` 同样。
@@ -404,7 +404,7 @@ verified_at = "2026-11-01T10:00:01Z"
 ### 8. 打包、分发、发布与非功能门槛
 
 - 单 package；release profile `lto = "thin"`、`strip = "symbols"`、`codegen-units = 1`；根 `.gitignore` 忽略 `/target`；提交 `Cargo.lock`。
-- 依赖：`clap` 4（derive）、`serde` + `serde_json`、`toml_edit`、`jsonc-parser`、`reqwest`（`default-features = false`，`blocking` + `json` + `rustls-tls`）、`uuid`（v4）、`thiserror`、`dirs`、`fs4`、`anstream` + `anstyle`、`jiff`。dev：`tempfile`、`assert_cmd`、`predicates`。不引入 `tokio`、`anyhow`、`keyring`、`openssl`。
+- 依赖：`clap` 4（derive）、`serde` + `serde_json`、`toml_edit`、`jsonc-parser`、`reqwest`（`default-features = false`，`blocking` + `json` + `rustls-tls`）、`uuid`（v4）、`thiserror`、`dirs`、`fs4`、`anstream` + `anstyle`、`jiff`。dev：`tempfile`、`assert_cmd`、`predicates`、`libc`（PTY 测试）。不引入 `tokio`、`anyhow`、`keyring`、`openssl`。
 - Target：`aarch64-apple-darwin`、`x86_64-apple-darwin`（`MACOSX_DEPLOYMENT_TARGET=11.0`）、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`。Linux 只发 musl 静态；macOS 双架构统一 deployment target 11.0。
 - 版本：crate `0.1.0`；`tcamp --version` 输出 `tcamp 0.1.0`；tag `v0.1.0`；预发布 `v0.2.0-rc.1`；严格 semver；不把 git SHA 塞进 `--version`。
 - 资产：`tcamp-<version>-<target>.tar.gz`（版本不带 `v`）；包内只有 `tcamp` 与 `LICENSE`，位于归档根，无外层目录；每个资产一个 `.sha256`；合并的 `SHA256SUMS`（`sha256sum` 标准格式，两个空格分隔）；只发 `.tar.gz`。
@@ -418,7 +418,7 @@ verified_at = "2026-11-01T10:00:01Z"
 - 签名与公证：v1 不签名、不公证。curl 下载不带 quarantine，`install.sh` 安装不会触发 Gatekeeper；浏览器直接下 Release 的用户会遇到拦截。docs Start › Install 写明右键打开或 `xattr -d com.apple.quarantine`；README 只保留 `not signed or notarized`、`no updater, re-run the installer` 与 docs 链接；`install.sh` 不自动去 quarantine。
 - 文档权威：用户面向事实以 docs 站（Start / CLI reference / Security and limitations）为唯一权威；`README.md` 与 `README.zh-CN.md` 只做入口、7 项白名单重复与 Security 摘要。白名单共 7 项：canonical install 命令、一条 `TCAMP_VERSION` pin 示例、OS 支持行、四行 quickstart、三行 Config target 表、`no updater, re-run the installer`、`not signed or notarized`。Security 摘要保留 `0600`/`0700`、原子写、Launch 注入、字面量 API key 备份 caveat、Portal 吊销与无 telemetry/更新检查。Troubleshooting、Known limitations、Uninstall 与 ownership 细节只在 docs。
 - 仓库卫生：`README.md` 英文 + `README.zh-CN.md`，二者同节结构并遵守文档白名单；`SECURITY.md` 只指向 GitHub Private Vulnerability Reporting；v1 不加 `CONTRIBUTING.md`、issue 模板、PR 模板；不加 per-file license header；`Cargo.toml` 写 `license = "Apache-2.0"`。
-- CI 与供应链：PR CI `fmt --check`、`clippy -D warnings`、`test`，矩阵 `ubuntu-latest` + `macos-14`；MSRV job；每周 `cargo-deny`（advisories + licenses）；Dependabot（cargo 与 actions，周更、分组）；Actions 用 major tag；每个 workflow 最小 `permissions`；发布构建 `--locked`；每个资产用 `actions/attest-build-provenance` 生成 provenance；开启 GitHub Release immutability；不发 crates.io / npm。
+- CI 与供应链：PR CI `fmt --check`、`clippy -D warnings`、`test`，矩阵 `ubuntu-latest` + `macos-15`（`macos-14` runner 无法分配；release build 的 `x86_64-apple-darwin` 使用 `macos-15-intel`）；MSRV job；每周 `cargo-deny`（advisories + licenses）；Dependabot（cargo 与 actions，周更、分组）；Actions 用 major tag；每个 workflow 最小 `permissions`；发布构建 `--locked`；每个资产用 `actions/attest-build-provenance` 生成 provenance；开启 GitHub Release immutability；不发 crates.io / npm。
 - `install-smoke`：ubuntu + macOS 本地构建 archive 与校验和，摆成 `releases/latest/download/` 结构，用 `TCAMP_RELEASES_URL` 指向本地，真实执行 `install.sh` 到临时 `TCAMP_INSTALL_DIR`，断言 `tcamp --version`；再加篡改校验和的负例，断言 exit 1 且目标目录无二进制；另跑 `shellcheck` 与 `sh -n`。
 - 非功能门槛：release build 上 `tcamp --version` / `--help` p95 ≤ 100ms；离线 `status` / `doctor` p95 ≤ 500ms；未压缩二进制 ≤ 15 MiB/target；`tar.gz` ≤ 6 MiB/target。发布时硬门禁；PR 只记录延迟。除 Login、Doctor `--network` / `--verify`、preflight 模型检查外 0 出站请求；无更新检查、无分析、无遥测。
 
@@ -450,7 +450,7 @@ verified_at = "2026-11-01T10:00:01Z"
   - NFR：启动延迟、二进制大小、无遥测、日志脱敏。
   - NEG：Codex / OpenCode / `env` / `--project` / `--fix` / `--lang` / Windows / 无 pro 改动。
 - T1 使用 local mock HTTP server 断言 request line、headers、body、stream 形状；使用 fake Harness 断言 `--settings`、`--provider/--model`、`-m`、注入的 `TOKENCAMP_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN`、`exec` 退出码。T2 使用真实 Harness + 真实 tokencamp API key，从干净临时 Home 开始，按 #13 的 SMOKE 流程执行 `tcamp login` → `tcamp <harness> --no-launch` → `tcamp <harness> -- -p '...'`，记录 Harness 版本、掩码 key、request id 和成本。
-- 每个 T1 行必须在 `ubuntu-latest` + `macos-14` 全绿；T2 的 Pi / Kimi 真实 Smoke、真实 Harness 兼容和文档清单必须完成；没有 open 的 P0/P1；发布经理在 `RELEASE-CHECKLIST.md` 签字。Claude Code live Smoke 是 deferred：触发条件是 ops 在目标环境添加 `provider_type: anthropic` deployment（`deepseek/deepseek-v4.1-flash` 或 `deepseek/deepseek-v4-pro`，base URL `https://api.deepseek.com/anthropic`），owner 是发布经理 / ops；未补测不阻塞 v1。
+- 每个 T1 行必须在 `ubuntu-latest` + `macos-15` 全绿（`macos-14` runner 无法分配，见 §8）；T2 的 Pi / Kimi 真实 Smoke、真实 Harness 兼容和文档清单必须完成；没有 open 的 P0/P1；发布经理在 `RELEASE-CHECKLIST.md` 签字。Claude Code live Smoke 是 deferred：触发条件是 ops 在目标环境添加 `provider_type: anthropic` deployment（`deepseek/deepseek-v4.1-flash` 或 `deepseek/deepseek-v4-pro`，base URL `https://api.deepseek.com/anthropic`），owner 是发布经理 / ops；未补测不阻塞 v1。
 - 验收分两层：规格完成 = 决策集完整、可执行、无未决设计问题、#13 矩阵原样可复制；实现发布 = T1 全绿、T2 完成、文档清单通过、无 P0/P1、签字。`SPEC.md` 由实现 effort 第一步汇编，不在本规格的交付物内。
 
 ## Out of Scope
@@ -485,7 +485,7 @@ verified_at = "2026-11-01T10:00:01Z"
   - Claude Code live Smoke：触发条件 = ops 在目标环境添加 `provider_type: anthropic` deployment；owner = 发布经理 / ops；未补测不阻塞 v1。
   - `SPEC.md` 汇编：实现 effort 第一步，原样复制本 issue 与 #13 矩阵；owner = 实现者。
   - T3 nightly 与真实 key 的额外 Smoke：可选，不设发布门槛；owner = 发布经理。
-- 已知风险：Claude Code / Pi / Kimi Code 版本迭代快，版本地板和字段可能漂移；tokencamp 生产 / 预发 Base URL 仍标 provisional；模型目录与 deployment 可能变化；静态 curated 表需要随发版维护；macOS 无 Developer ID，v1 不签名不公证；CI 没有 Intel macOS runner，`x86_64-apple-darwin` 只做构建 + `--version` Smoke。
+- 已知风险：Claude Code / Pi / Kimi Code 版本迭代快，版本地板和字段可能漂移；tokencamp 生产 / 预发 Base URL 仍标 provisional；模型目录与 deployment 可能变化；静态 curated 表需要随发版维护；macOS 无 Developer ID，v1 不签名不公证；PR CI 没有 Intel macOS runner；`x86_64-apple-darwin` 在 release workflow 的 `macos-15-intel` runner 上构建并做 `--version` Smoke。
 - 实现顺序建议：先按 #13 汇编 `SPEC.md`，再搭 Cargo 骨架与 `install.sh` / release workflow，然后实现 Credential 与 Config 引擎（原子写、manifest、合并、Shadowing），再实现三个 Adapter 与 Model mapping，接着 CLI / Doctor / preflight，最后按 121 行矩阵补 T1、执行 T2、写 README 英文与 `README.zh-CN.md`。
 - 文档语言：代码、标识符、commit 用 English；内部设计文档中文；CLI 人类输出 English；README 英文 + `README.zh-CN.md`；docs 站为用户面向事实的唯一权威。
 
@@ -502,7 +502,7 @@ verified_at = "2026-11-01T10:00:01Z"
 Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effort 的第一步按本 comment 的目录汇编，不另开 wayfinder ticket。
 ### 2. v1 发布完成条件
 
-- T1 在 `ubuntu-latest` + `macos-14` 全绿。
+- T1 在 `ubuntu-latest` + `macos-15` 全绿（`macos-14` runner 无法分配，见 §8）。
 - T2 的 Pi/Kimi 真实 smoke 与真实 harness 版本兼容性全部完成。
 - README 英文 + `README.zh-CN.md` 作为 docs 入口通过 `tests/docs.rs`；docs 权威页（Start / CLI reference / Security and limitations）文档清单通过。
 - 没有 open 的 P0/P1 缺陷。
@@ -534,7 +534,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 
 证据约定：
 
-- T1 evidence 写测试文件组（实现时落到 `tests/`）。
+- T1 evidence 写测试文件组（实现时落到 `tests/`）。`CFG-C-01..14` 与 `CLI-05` / `CLI-08` 的 Evidence 列保留 #13 的占位文件名；实现后的覆盖分布在 `tests/config_claude.rs`、`tests/config_pi.rs`、`tests/config_kimi.rs`、`tests/cli.rs`、`tests/doctor_json.rs`、`tests/auth.rs`、`tests/status.rs` 等，逐行映射见 `RELEASE-CHECKLIST.md` 的 Known deviations。
 - T2 evidence 写进仓库根 `RELEASE-CHECKLIST.md`，列：`ID | Date | OS/arch | Harness version | Key (masked) | Result | Request ID | Notes`；DOC-01..07 的 README 入口部分另由 `tests/docs.rs` 机器断言。
 - 矩阵 canonical 在本 comment；`SPEC.md` 汇编时原样复制。AUTH-15、NFR-04、PKG-08 与 DOC-01..07 由 [#35](https://github.com/0xnicholas/tokencamp-tools/issues/35) 在 #34 README docs 入口化后修订：AUTH-15 / NFR-04 对齐 §2 的“输出脱敏 + 备份保留原文件字节”两层 API key 规则；PKG-08 与 DOC 的审查对象为 README 入口 + docs 权威页；其余行保持 #13 原文。
 
@@ -659,7 +659,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 | DR-05 | T1 | network.verify | `--verify`；mock 2xx/401/402/400/403/404/429/5xx/超时 | `doctor --verify` | 隐含 `--network`；整次最多一个真实请求、不重试、30s、`max_tokens:1`、`stream:false`、`model:"zhipu/glm-5.3"`；2xx pass；403/429 warn；401/402/400/404/5xx/网络 fail | `tests/doctor_network.rs` | PR+rel |
 | DR-06 | T1 | Harness binary | 未选/未安装/低于地板/版本解析失败 | doctor | 未选 skip；未安装 warn；低于地板 warn；`--version` 失败/无法解析 fail；地板 Claude 2.1.304/Pi 1.4.0/Kimi 2.1.1 | `tests/doctor.rs` | PR+rel |
 | DR-07 | T1 | Config/ownership/backups | 未配置；解析损坏；不可写；manifest 缺失/target 缺失/broken symlink；drift；备份缺失 | doctor | 未配置 skip；解析/不可写/target 缺失/symlink fail；manifest ok pass；drift/备份缺失/Claude marker 丢失 warn；manifest schema fail；unowned 冲突 fail | `tests/doctor.rs` | PR+rel |
-| DR-08 | T1 | Shadowing/messages | Claude 可读冲突/managed 不可读；Pi auth；Kimi literal；Claude 默认/verify | doctor | Claude 冲突 fail、managed 不可读 warn（人类标红）；Pi `tokencamp`/损坏 fail；Kimi owned literal warn、unowned literal fail；Claude messages 默认 warn；verify 2xx pass、404 hint、401/402/400/404/5xx fail、403/429 warn | `tests/doctor.rs` | PR+rel |
+| DR-08 | T1 | Shadowing/messages | Claude 可读冲突/managed 不可读；Pi auth；Kimi literal；Claude 默认/verify | doctor | Claude 冲突 fail、managed 不可读 warn；Pi `tokencamp`/损坏 fail；Kimi owned literal warn、unowned literal fail；Claude messages 默认 warn；verify 2xx pass、404 hint、401/402/400/404/5xx fail、403/429 warn | `tests/doctor.rs` | PR+rel |
 | DR-09 | T1 | Models | 离线映射完整/缺槽/禁用值；联网全 200/任一 404/网络失败 | doctor / `--network` | 离线：完整且无禁用值 pass，缺槽/禁用值 fail；联网：全 200 pass，404/网络/超时 fail；检查 Claude 5 个去重 id、Pi/Kimi 5 个 id；`tokencamp/auto` 也查 | `tests/doctor.rs` | PR+rel |
 | DR-10 | T1 | Exit/filter | fail 数 0/1；用法错误；`--harness` 合法/非法/重复 | doctor | 0 无 fail；1 有 fail；2 仅用法错误；`--harness` 只过滤 harness 块，connection/network 始终显示；非法/重复 exit 2 | `tests/doctor.rs` | PR+rel |
 | DR-11 | T1 | JSON shape | 成功/失败报告；离网 | `doctor --json` | 恰好一个对象；`ok` 与 fail==0 同义；`key.verified` 离线 null；`checks[]` 含 id/scope/harness/status/message/hint/code/request_id；`warnings[]`；`summary` 只统计实际输出 | `tests/doctor_json.rs` | PR+rel |
@@ -686,7 +686,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 | PKG-04 | T1 | install.sh | 本地归档+校验和 | 执行 install.sh | POSIX `sh`；`TCAMP_INSTALL_DIR` 默认 `$HOME/.local/bin`；`TCAMP_VERSION`/`--version`；`TCAMP_RELEASES_URL`；平台检测；checksum；解包确认；原子替换；`--version` 比对；PATH hint；无 sudo/profile/quarantine/uninstall | `tests/install_sh.rs` | PR+rel |
 | PKG-05 | T1 | install fail | 篡改 checksum；不支持平台；缺 sha 工具；已有安装 | install.sh | checksum 不匹配 exit 1 `refusing to install`；不支持/用法 exit 2；替换前失败不动已有安装；临时目录清理；`install-smoke` 正/负例；`shellcheck` + `sh -n` | `.github/workflows/*.yml`、`tests/install_sh.rs` | PR+rel |
 | PKG-06 | T1 | Release workflow | push `v*` tag；缺 CHANGELOG 节；tag 非 main 祖先 | release.yml | `verify` fmt/clippy/test；`build` 四 target；`publish` 先 ancestor check；CHANGELOG 缺失失败；prerelease；`contents:write`；concurrency；资产齐全 | `.github/workflows/release.yml` | PR+rel |
-| PKG-07 | T1 | CI/supply | PR / 周任务 | CI | PR 矩阵 `ubuntu-latest`+`macos-14`；MSRV job；`cargo-deny` 周更；Dependabot cargo/actions；最小 permissions；`--locked`；provenance；immutability；不发 crates.io/npm | `.github/workflows/*.yml` | PR+rel |
+| PKG-07 | T1 | CI/supply | PR / 周任务 | CI | PR 矩阵 `ubuntu-latest`+`macos-15`；MSRV job；`cargo-deny` 周更；Dependabot cargo/actions；最小 permissions；`--locked`；provenance；immutability；不发 crates.io/npm | `.github/workflows/*.yml` | PR+rel |
 | PKG-08 | T1 | Docs/signing | 发布前 | 检查文档 | v1 不签名/不公证；`README.md` + `README.zh-CN.md` 作为 docs 入口：6 个 H2 中英文对齐、无 H3、无 Troubleshooting/Known limitations/Uninstall、只重复 7 项白名单（Implementation Decisions §8）与 Security 摘要，并按要求链 docs 三页（Install/Quickstart→Start，Configuration→Reference，Security→Security）；Gatekeeper、卸载、已知限制、ownership 细节只在 docs，`install.sh` 不自动去 quarantine；`SECURITY.md` 指向 Private Vulnerability Reporting；无 CONTRIBUTING/issue/PR 模板/逐文件 license header；无 updater | `tests/docs.rs`、`tests/release_workflow.rs`（SECURITY / CONTRIBUTING / license header） | PR+rel |
 
 #### NFR — 非功能

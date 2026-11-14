@@ -2,7 +2,7 @@
 
 Acceptance tier: v1 release (Tier T1 automated matrix + Tier T2 manual smoke, compatibility, and documentation review).
 
-Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo 1.98.1, stable toolchain plus Rust 1.85.0. CI: `ubuntu-latest` x86_64 and `macos-15` arm64. The SPEC matrix totals 121 rows: 107 T1 rows are in the T1 table below and 14 T2 rows (SMOKE 3, COMPAT 4, DOC 7) are in the T2 table. T2 is manual and cannot be completed by the deterministic suite. SMOKE requires a real tokencamp API key and a real Harness; COMPAT uses real Harness binaries and, because it makes no live request, a synthetic key.
+Environment for the local run: macOS 13.7.8 (Ventura), Intel x86_64, rustc/cargo 1.98.1, stable toolchain plus Rust 1.85.0. CI: `ubuntu-latest` x86_64 and `macos-15` arm64; the release workflow builds `x86_64-apple-darwin` on `macos-15-intel`. The SPEC matrix totals 121 rows: 107 T1 rows are in the T1 table below and 14 T2 rows (SMOKE 3, COMPAT 4, DOC 7) are in the T2 table. T2 is manual and cannot be completed by the deterministic suite. SMOKE requires a real tokencamp API key and a real Harness; COMPAT uses real Harness binaries and, because it makes no live request, a synthetic key.
 
 Dates: the T1 and DOC rows dated 2026-11-07 are carried from the prior run; the T1 re-measurement and the COMPAT rows were executed on 2026-11-08. Code tip: `integration/v1` at `896c25e`; CI run 42476228862 on `27bc471` is green. The checklist is signed below for `v0.1.0`; the release manager explicitly accepted the blocked SMOKE-01/02 rows because no real tokencamp API key or reachable API was available.
 
@@ -37,7 +37,7 @@ The current `integration/v1` workflow uses `macos-15` (arm64), not `macos-14`; `
 
 ## T1 matrix
 
-The canonical matrix, including each row's tier, precondition/fixture, action, and expected result, is `SPEC.md` section 5. This table records the executed result and concrete evidence for every row. `SPEC.md` assembles the decision set from #17 and the canonical matrix from #13; a scan finds no `TBD`/`TODO`/`待定` decision markers (the only match is the statement that none are allowed).
+The canonical matrix, including each row's tier, precondition/fixture, action, and expected result, is `SPEC.md` section 5. This table records the executed result and concrete evidence for every row. `SPEC.md` assembles the decision set from #17 and the canonical matrix from #13; a scan finds no `TBD`/`TODO`/`待定` decision markers (the only match is the statement that none are allowed). PKG-06 and PKG-07 were updated from `skipped` to `pass` after the `v0.1.0` tag workflow ran; the Notes column preserves the sign-off context.
 
 | ID | Tier | Area | Evidence | Result | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -137,8 +137,8 @@ The canonical matrix, including each row's tier, precondition/fixture, action, a
 | PKG-03 | T1 | Assets | `tests/packaging.rs` | partial | Local host archive contains only tcamp+LICENSE, `.sha256` and two-space `SHA256SUMS`; the full four-archive set is only produced at release time. |
 | PKG-04 | T1 | install.sh | `tests/install_sh.rs` | pass | 21 installer tests: default dir, version pin, checksum, platform, atomic replace, PATH hint, no sudo/profile/quarantine/uninstall. |
 | PKG-05 | T1 | install fail | `tests/install_sh.rs`, `scripts/install-smoke.sh`, `.github/workflows/ci.yml` | pass | install-smoke covers tampered checksum, existing install preservation, temp cleanup, shellcheck/sh -n. |
-| PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | skipped | No `v*` tag was pushed. Workflow contract (tag-only, verify, four targets, per-target `--version`, ancestor, CHANGELOG, prerelease, permissions) is checked by tests/release_workflow.rs; publish not executed. |
-| PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | skipped | Provenance and release immutability only run on a tag release; no `v*` tag was pushed. Contract tests pass and CI run 42370138121 is green, but the tag-only checks were not executed here. |
+| PKG-06 | T1 | Release workflow | `.github/workflows/release.yml`, `tests/release_workflow.rs` | pass | Post-release: `v0.1.0` workflow run 42477876200 executed `verify`, all four target `build` jobs, and `publish`; workflow contract is also checked by tests/release_workflow.rs. At sign-off no `v*` tag had been pushed. |
+| PKG-07 | T1 | CI/supply | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `tests/release_workflow.rs`, `tests/nfr.rs` | pass | Post-release: `gh attestation verify` succeeded for `tcamp-0.1.0-x86_64-apple-darwin.tar.gz`, and GitHub release immutability is enabled (`gh api repos/0xnicholas/tokencamp-tools/immutable-releases` -> `enabled: true`). Contract tests pass and CI run 42370138121 is green. At sign-off the tag-only checks had not run. |
 | PKG-08 | T1 | Docs/signing | `tests/docs.rs`, `tests/release_workflow.rs` | pass | No signing/notarization; Gatekeeper/xattr docs; PVR; no CONTRIBUTING/templates; uninstall binary hint; no updater. |
 | NFR-01 | T1 | Startup latency | `tests/perf.rs` | pass | 2026-11-08 release-gate p95: --version 8.5ms, --help 11.4ms, status 8.2ms, doctor 12.8ms (limits 100/100/500/500). |
 | NFR-02 | T1 | Binary size | `.github/workflows/release.yml`, `tests/packaging.rs` | partial | Host x86_64-apple-darwin size measured: 4,716,304 B uncompressed (4.50 MiB <=15 MiB); 2,255,333 B tar.gz (2.15 MiB <=6 MiB). The other targets are measured only at release time. |
@@ -188,7 +188,7 @@ The README H2 set is Documentation, Install, Quickstart, Configuration, Security
 
 ## Known deviations
 
-- CI uses `macos-15` (arm64) instead of the SPEC's `macos-14`: `macos-14` jobs were cancelled before runner assignment, and `macos-15` is the available arm64 image. Coverage remains macOS arm64.
+- Resolved 2026-11-14: the SPEC now names `macos-15` (arm64) for PR CI and `macos-15-intel` for the x86_64 macOS release build. The earlier `macos-14` label was replaced because those jobs were cancelled before runner assignment.
 - The SPEC evidence paths `tests/config_common.rs` and `tests/cli_json.rs` do not exist as standalone files; their coverage is distributed across the adapter suites and `tests/cli.rs`, `tests/doctor_json.rs`, `tests/auth.rs`, `tests/status.rs`, and `tests/config_claude.rs`, as noted row by row.
 - T2 smoke, real-Harness compatibility, documentation review, and release-manager sign-off remain manual; they are not part of the deterministic suite. COMPAT-01..04 and DOC-01..07 are recorded above; SMOKE-01/02 were explicitly accepted as blocked for `v0.1.0` by the release manager.
 
@@ -200,6 +200,8 @@ The README H2 set is Documentation, Install, Quickstart, Configuration, Security
 - The three non-host release targets and the tag-triggered release workflow are enforced by the `v0.1.0` workflow: the other-target builds and their `--version` checks, the full four-archive set, the publish job (including extraction of the `## [0.1.0]` CHANGELOG section as release notes), and the size checks must pass before the release is published. A workflow failure blocks publication.
 - PR #31 (`integration/v1` -> `main`) must be merged before tagging; the release tag must be cut from `main` because the release workflow checks that the tag is an ancestor of `origin/main`.
 - No P0/P1 priority labels exist in this repository; the release manager confirmed that no open P0/P1 remains.
+
+Post-release status (2026-11-14): PR #31 is merged, `v0.1.0` is tagged at `2b2e348`, and workflow run 42477876200 completed `verify`, all four target builds, and `publish`. The tag-only items above are therefore evidenced; SMOKE-01/02 remain accepted as blocked and SMOKE-03 remains deferred.
 
 ## Release sign-off
 
