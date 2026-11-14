@@ -4,9 +4,10 @@
 
 - **Part I** 原样汇编自 [#17](https://github.com/0xnicholas/tokencamp-tools/issues/17)（v1 规格：产品、实现决策、测试决策、范围）。
 - **Part II** 汇编自 [#13](https://github.com/0xnicholas/tokencamp-tools/issues/13) 的 resolution comment（验收清单、测试矩阵、smoke 流程、非功能门槛、traceability）。其中 map 流程相关的第 1 节（规格完成条件）与第 10 节（对 map 的影响）不属于实现契约，未收录。
-- **测试矩阵**是 canonical 验收契约，按 #13 原样复制，共 121 行；实现时不得改写行内容。
+- **测试矩阵**是 canonical 验收契约，按 #13 原样复制，共 121 行；实现时不得改写行内容。例外：AUTH-15、NFR-04、PKG-08 与 DOC-01..07 按 [#35](https://github.com/0xnicholas/tokencamp-tools/issues/35) 验收条目修订（见 Part II §4）。
 - **术语**以仓库根 `GLOSSARY.md` 为准；平台词汇按 tokencamp-pro 的 `CONTEXT.md` 复用。
 - **语言约定**：代码、标识符、commit message 用 English；内部设计文档中文；CLI 人类输出 English；README 英文 + `README.zh-CN.md`。
+- **文档权威**：用户面向事实以 docs 站为唯一权威；`README.md` 与 `README.zh-CN.md` 只做入口、7 项白名单重复与 Security 摘要（见 Implementation Decisions §8）。
 
 # Part I — v1 产品规格（#17）
 
@@ -123,7 +124,7 @@
 82. **无静默回退**：作为用户，我希望模型下架或改名时不自动换模型，以便我知道发生了什么。
 83. **打包**：作为发布经理，我希望四个 target、固定资产名、校验和和 provenance，以便可重复发布。
 84. **发布**：作为发布经理，我希望 tag `v*` 触发 verify / build / publish、CHANGELOG 缺失时失败、prerelease 正确，以便发布可控。
-85. **不签名**：作为 macOS 用户，我希望 README 说明 Gatekeeper 右键打开或 `xattr`、install.sh 不自动绕过，以便知情。
+85. **不签名**：作为 macOS 用户，我希望 docs 说明 Gatekeeper 右键打开或 `xattr`、install.sh 不自动绕过，README 只保留 `not signed or notarized`，以便知情。
 86. **卸载二进制**：作为用户，我希望 `tcamp uninstall` 清配置但保留凭据 / 备份 / 二进制，并提示 `rm "$(command -v tcamp)"`，以便分离配置与二进制。
 87. **无遥测**：作为隐私敏感用户，我希望除显式网络操作外 0 出站请求，以便不泄露使用数据。
 88. **Codex 负向**：作为用户，我希望 `tcamp codex` exit 2、不写任何 Codex 配置、指向 README，以便知道 Codex 不在 v1。
@@ -201,7 +202,7 @@ verified_at = "2026-11-01T10:00:01Z"
 ```
 
 - `version` 不认识或 TOML 损坏：报错、打印路径、不覆盖、exit 2。`verified_at` 只在验证通过时写入；`--no-verify` 时省略。不存 Portal 用户名、workspace 或其他派生字段。
-- 完整 API key 永不出现在日志、错误、JSON、Status、diff 或备份中；掩码格式为 `sk-…` + 后四位（key 太短则全掩）。
+- API key 输出分两层：`tcamp` 自己生成或输出的日志、错误、JSON、Status、diff 与 hint 永不包含完整 API key；变更前备份按原文件字节保存（`0600`），用户预置在 Config target 中的字面量 API key（README 称 `literal key`）可能存在于备份中，但 `tcamp` 从不打印其值。掩码格式为 `sk-…` + 后四位（key 太短则全掩）。
 
 ### 3. 配置所有权、写入引擎与 Uninstall
 
@@ -219,7 +220,7 @@ verified_at = "2026-11-01T10:00:01Z"
 - 目标解析或结构校验失败：exit 2，打印路径与行列号，不写、不备份。`rename` 失败：原文件不动，临时文件清理，exit 1。配置写成功但 manifest 写失败：尝试从备份回滚；回滚失败 exit 2，打印两个路径。
 - `--dry-run`：只读，不建目录、不拿锁、不写备份或状态；输出 unified diff，敏感值打码；解析失败 exit 2，否则 0。
 - `--force`：只用于覆盖 tcamp 不拥有的东西和非 TTY 冲突确认；不跳过解析、校验、原子写、备份。`--yes`：只回答 TTY 交互确认，不能替代 `--force`；非 TTY 冲突无 `--force` exit 2。
-- 密钥边界：Config target 只写非密接线（Base URL、Catalog model、Pi `apiKey: "$TOKENCAMP_API_KEY"`、Kimi `api_key_env`、Claude Overlay env 不含 token）。已有字面量 key 视为 Conflict：先备份（`0600`），要求 `--force`，绝不打印值；force 后替换为环境变量引用。
+- 密钥边界：Config target 只写非密接线（Base URL、Catalog model、Pi `apiKey: "$TOKENCAMP_API_KEY"`、Kimi `api_key_env`、Claude Overlay env 不含 token）。已有字面量 API key 视为 Conflict：先按原文件字节备份（`0600`，因此备份可能含该字面量 API key），要求 `--force`，绝不打印值；force 后替换为环境变量引用。
 - Ownership manifest：`managed.toml`（`0600`，`version = 1`）与凭据同目录，按解析后的 Config target 路径记录：Harness、文件是否由 tcamp 创建、Provider entry 是否创建或被 Adopt、tcamp 创建的模型 id、受管对象的 last-written hash、备份路径、时间戳。不存敏感值。
 - Claude Overlay 整文件所有，带 `_tcamp: {version, harness}` 标记；缺标记或 version 不匹配 → Conflict。manifest 只记录备份与版本。
 - Pi / Kimi 使用键级所有权，不在共享配置里放标记键：
@@ -270,7 +271,7 @@ verified_at = "2026-11-01T10:00:01Z"
 - 版本地板 `2.1.304`；低于地板只 `warn`，不阻止 Configure / Launch；`--version` 本身失败在 Doctor 记 `fail`。
 - `/v1/messages` 当前只服务有 `provider_type: anthropic` deployment 的模型；默认环境没有该 deployment，因此 v1 是 config-only。`tcamp claude` Launch 前在 stderr 打一行“`/v1/messages` capability unverified; requires an anthropic deployment; run `tcamp doctor --harness claude`”，不阻断。Doctor 默认 `warn`；`doctor --verify --harness claude` 发一次 `/v1/messages`，404 `model_not_found` 给 deployment hint。
 - `--model` 只覆盖本次主模型，opus / sonnet / haiku / fable Slot 不变；不写 Config target。Claude Code 只接受 canonical Catalog model id；`auto`、`@preset/...`、`~family-latest` 拒绝，exit 2 并列出可用 id。
-- 已知限制写入 README：thinking 被关闭；prompt cache 在 message content block 上退化；tool search 关闭；Claude Code live Smoke deferred。
+- 已知限制写入 docs Security › Platform support and limitations：thinking 被关闭；prompt cache 在 message content block 上退化；tool search 关闭；Claude Code live Smoke deferred。
 
 #### Pi
 
@@ -414,8 +415,9 @@ verified_at = "2026-11-01T10:00:01Z"
 - `install.sh` 失败语义：替换前任何失败（网络、缺工具、校验和不匹配、解包失败）不动已有安装，清理临时目录；校验和不匹配 exit 1，输出 `refusing to install`；不支持平台或用法错误 exit 2；已安装版本与新版相同仍重写；不做 sudo、不修改 shell profile、不自动去 quarantine、不写 Harness 配置；无 `--uninstall`；装完若目标目录不在 `PATH`，打印一行 `export PATH="<dir>:$PATH"`，不改文件。
 - 发布工作流：`.github/workflows/release.yml`，仅 push tag `v*` 触发。`verify` job 跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（ubuntu）。`build` job 四 target 矩阵，`needs: verify`，`cargo build --release --locked --target <t>`，打包 + 校验和，上传 artifact。`publish` job `needs: build`，先确认 tag 是 `origin/main` 的祖先，再 `gh release create "$TAG" --verify-tag` 上传四个 tarball、四个 `.sha256`、`SHA256SUMS`、`install.sh`。
 - Release notes 从 `CHANGELOG.md` 提取 `## [<version>]` 一节；缺失则发布失败，不自动生成。`CHANGELOG.md` 手工维护（Keep a Changelog）。tag 含 `-` → `--prerelease`。`permissions: contents: write`；provenance 需要时加 `id-token: write` + `attestations: write`；`concurrency` 保证同时只有一个发布；资产中不允许出现契约外的文件。
-- 签名与公证：v1 不签名、不公证。curl 下载不带 quarantine，`install.sh` 安装不会触发 Gatekeeper；浏览器直接下 Release 的用户会遇到拦截，README 写明右键打开或 `xattr -d com.apple.quarantine`，`install.sh` 不自动去 quarantine。
-- 仓库卫生：`README.md` 英文 + `README.zh-CN.md`；`SECURITY.md` 只指向 GitHub Private Vulnerability Reporting；v1 不加 `CONTRIBUTING.md`、issue 模板、PR 模板；不加 per-file license header；`Cargo.toml` 写 `license = "Apache-2.0"`。
+- 签名与公证：v1 不签名、不公证。curl 下载不带 quarantine，`install.sh` 安装不会触发 Gatekeeper；浏览器直接下 Release 的用户会遇到拦截。docs Start › Install 写明右键打开或 `xattr -d com.apple.quarantine`；README 只保留 `not signed or notarized`、`no updater, re-run the installer` 与 docs 链接；`install.sh` 不自动去 quarantine。
+- 文档权威：用户面向事实以 docs 站（Start / CLI reference / Security and limitations）为唯一权威；`README.md` 与 `README.zh-CN.md` 只做入口、7 项白名单重复与 Security 摘要。白名单共 7 项：canonical install 命令、一条 `TCAMP_VERSION` pin 示例、OS 支持行、四行 quickstart、三行 Config target 表、`no updater, re-run the installer`、`not signed or notarized`。Security 摘要保留 `0600`/`0700`、原子写、Launch 注入、字面量 API key 备份 caveat、Portal 吊销与无 telemetry/更新检查。Troubleshooting、Known limitations、Uninstall 与 ownership 细节只在 docs。
+- 仓库卫生：`README.md` 英文 + `README.zh-CN.md`，二者同节结构并遵守文档白名单；`SECURITY.md` 只指向 GitHub Private Vulnerability Reporting；v1 不加 `CONTRIBUTING.md`、issue 模板、PR 模板；不加 per-file license header；`Cargo.toml` 写 `license = "Apache-2.0"`。
 - CI 与供应链：PR CI `fmt --check`、`clippy -D warnings`、`test`，矩阵 `ubuntu-latest` + `macos-14`；MSRV job；每周 `cargo-deny`（advisories + licenses）；Dependabot（cargo 与 actions，周更、分组）；Actions 用 major tag；每个 workflow 最小 `permissions`；发布构建 `--locked`；每个资产用 `actions/attest-build-provenance` 生成 provenance；开启 GitHub Release immutability；不发 crates.io / npm。
 - `install-smoke`：ubuntu + macOS 本地构建 archive 与校验和，摆成 `releases/latest/download/` 结构，用 `TCAMP_RELEASES_URL` 指向本地，真实执行 `install.sh` 到临时 `TCAMP_INSTALL_DIR`，断言 `tcamp --version`；再加篡改校验和的负例，断言 exit 1 且目标目录无二进制；另跑 `shellcheck` 与 `sh -n`。
 - 非功能门槛：release build 上 `tcamp --version` / `--help` p95 ≤ 100ms；离线 `status` / `doctor` p95 ≤ 500ms；未压缩二进制 ≤ 15 MiB/target；`tar.gz` ≤ 6 MiB/target。发布时硬门禁；PR 只记录延迟。除 Login、Doctor `--network` / `--verify`、preflight 模型检查外 0 出站请求；无更新检查、无分析、无遥测。
@@ -423,10 +425,10 @@ verified_at = "2026-11-01T10:00:01Z"
 ### 9. 安全与错误模型
 
 - 类型化错误：每个错误映射到 `code`、人类 message、hint、退出码；服务器错误保留 `code` 与 `x-request-id`（有的话）。本地固定 code 见第 1 节。
-- API key 边界：只存凭据文件或环境变量；只由 `tcamp <harness>` Launch 时注入；Harness 配置不含字面量 key；完整 key 永不出现在 stdout、stderr、JSON、diff、备份、日志、错误或 hint；掩码为 `sk-…` + 后四位。
+- API key 边界：只存凭据文件或环境变量；只由 `tcamp <harness>` Launch 时注入；Harness 配置不含字面量 key；`tcamp` 自己生成的 stdout、stderr、JSON、diff、日志、错误与 hint 永不含完整 key；变更前备份按原文件字节保存（`0600`），可能含用户预置的字面量 API key，但 `tcamp` 不打印其值；掩码为 `sk-…` + 后四位。
 - 同用户进程可见环境变量是 v1 接受的边界；不是防同用户恶意进程的机制。运行中的 Harness 持有启动时的 key；轮换后需重启；Portal 吊销对网关立即生效。
 - 不写 `~/.claude.json`、不写 shell profile、不生成 wrapper、不做代理 / 网关 / 路由、不转发流量、不做项目级配置、不接 OS keyring。
-- 版本风险：Claude Code / Pi / Kimi Code 迭代很快；Adapter 的版本地板与已知限制写进 Doctor、README 和测试；模型目录可能漂移，静态 curated 表随 tcamp 发版更新。
+- 版本风险：Claude Code / Pi / Kimi Code 迭代很快；Adapter 的版本地板与已知限制写进 Doctor、docs 和测试；模型目录可能漂移，静态 curated 表随 tcamp 发版更新。
 
 ## Testing Decisions
 
@@ -485,7 +487,7 @@ verified_at = "2026-11-01T10:00:01Z"
   - T3 nightly 与真实 key 的额外 Smoke：可选，不设发布门槛；owner = 发布经理。
 - 已知风险：Claude Code / Pi / Kimi Code 版本迭代快，版本地板和字段可能漂移；tokencamp 生产 / 预发 Base URL 仍标 provisional；模型目录与 deployment 可能变化；静态 curated 表需要随发版维护；macOS 无 Developer ID，v1 不签名不公证；CI 没有 Intel macOS runner，`x86_64-apple-darwin` 只做构建 + `--version` Smoke。
 - 实现顺序建议：先按 #13 汇编 `SPEC.md`，再搭 Cargo 骨架与 `install.sh` / release workflow，然后实现 Credential 与 Config 引擎（原子写、manifest、合并、Shadowing），再实现三个 Adapter 与 Model mapping，接着 CLI / Doctor / preflight，最后按 121 行矩阵补 T1、执行 T2、写 README 英文与 `README.zh-CN.md`。
-- 文档语言：代码、标识符、commit 用 English；内部设计文档中文；CLI 人类输出 English；README 英文 + `README.zh-CN.md`。
+- 文档语言：代码、标识符、commit 用 English；内部设计文档中文；CLI 人类输出 English；README 英文 + `README.zh-CN.md`；docs 站为用户面向事实的唯一权威。
 
 
 # Part II — v1 验收契约与测试矩阵（#13）
@@ -502,7 +504,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 
 - T1 在 `ubuntu-latest` + `macos-14` 全绿。
 - T2 的 Pi/Kimi 真实 smoke 与真实 harness 版本兼容性全部完成。
-- README 英文 + `README.zh-CN.md` 文档清单通过。
+- README 英文 + `README.zh-CN.md` 作为 docs 入口通过 `tests/docs.rs`；docs 权威页（Start / CLI reference / Security and limitations）文档清单通过。
 - 没有 open 的 P0/P1 缺陷。
 - 由切 tag 的发布经理在 `RELEASE-CHECKLIST.md` 上签字，不设独立 QA 角色。
 
@@ -520,7 +522,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 - [ ] **PKG**：四 target、资产、install.sh、release workflow、CI/供应链通过（PKG-01..08）。
 - [ ] **NFR**：启动延迟、二进制大小、无遥测、日志脱敏通过（NFR-01..04）。
 - [ ] **NEG**：Codex/OpenCode/env/Windows/pro 改动等负向边界通过（NEG-01..04）。
-- [ ] **SMOKE / COMPAT / DOC**：T2 手动项完成并签字（SMOKE-01..03、COMPAT-01..04、DOC-01..07）。
+- [ ] **SMOKE / COMPAT / DOC**：T2 手动项完成并签字（SMOKE-01..03、COMPAT-01..04、DOC-01..07；DOC 审查 README 入口 + docs 权威页）。
 
 ### 4. 测试矩阵说明
 
@@ -533,8 +535,8 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 证据约定：
 
 - T1 evidence 写测试文件组（实现时落到 `tests/`）。
-- T2 evidence 写进仓库根 `RELEASE-CHECKLIST.md`，列：`ID | Date | OS/arch | Harness version | Key (masked) | Result | Request ID | Notes`。
-- 矩阵 canonical 在本 comment；`SPEC.md` 汇编时原样复制。
+- T2 evidence 写进仓库根 `RELEASE-CHECKLIST.md`，列：`ID | Date | OS/arch | Harness version | Key (masked) | Result | Request ID | Notes`；DOC-01..07 的 README 入口部分另由 `tests/docs.rs` 机器断言。
+- 矩阵 canonical 在本 comment；`SPEC.md` 汇编时原样复制。AUTH-15、NFR-04、PKG-08 与 DOC-01..07 由 [#35](https://github.com/0xnicholas/tokencamp-tools/issues/35) 在 #34 README docs 入口化后修订：AUTH-15 / NFR-04 对齐 §2 的“输出脱敏 + 备份保留原文件字节”两层 API key 规则；PKG-08 与 DOC 的审查对象为 README 入口 + docs 权威页；其余行保持 #13 原文。
 
 ### 5. 测试矩阵
 
@@ -556,7 +558,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 | AUTH-12 | T1 | Atomic/concurrency | 并发 login；模拟 rename 失败 | 两进程同时写；注入 rename 失败 | 原子写；last-writer-wins 不损坏；rename 失败原文件不动、临时文件清理、exit 1 | `tests/auth.rs` | PR+rel |
 | AUTH-13 | T1 | Logout | active connection；`--base-url` 指定；`--all` | `tcamp logout ...` | 删当前/指定/全部；active 清空，不自动切；不碰 harness 配置；提示运行中 harness 仍持旧 key、Portal 吊销立即生效 | `tests/auth.rs` | PR+rel |
 | AUTH-14 | T1 | Status | 有 key、harness 已配置 | `tcamp status` / `--json` | 显示 active base URL、掩码 key、source、`verified_at`、存储路径、harness installed/configured/target/conflict；无完整 key | `tests/status.rs` | PR+rel |
-| AUTH-15 | T1 | Redaction | 固定 sentinel key；覆盖所有命令/错误/diff/备份 | 全命令扫描 stdout/stderr/JSON/备份 | 完整 key 不出现；`request_id` 只在 JSON 或 `-v`；无栈/原始响应体 | `tests/redaction.rs` | PR+rel |
+| AUTH-15 | T1 | Redaction | 固定 sentinel key；覆盖所有命令/错误/diff/备份 | 全命令扫描 stdout/stderr/JSON/备份 | sentinel key 不出现在 stdout/stderr/JSON/diff；备份扫描只确认 `tcamp` 保存的 API key 不进入备份，用户预置的字面量 API key 可留在 `0600` 备份；`request_id` 只在 JSON 或 `-v`；无栈/原始响应体 | `tests/redaction.rs` | PR+rel |
 | AUTH-16 | T1 | Portal hint | 官方云 401；自托管 401 | login | 官方云给 `https://tokencamp.com/keys`；自托管只打印 base URL，不猜路径 | `tests/auth.rs` | PR+rel |
 | AUTH-17 | T1 | Paths | 自定义 `XDG_CONFIG_HOME`；未设置 | login | 凭据在 `$XDG_CONFIG_HOME/tokencamp/credentials.toml`；fallback `~/.config/tokencamp/`；0700/0600 | `tests/auth.rs` | PR+rel |
 | AUTH-18 | T1 | HTTP policy | 公网 `http://`；loopback/RFC1918/link-local `http://`；https | login/status | 公网明文拒绝 exit 2；内网/本地 HTTP 允许并 warning；HTTPS 允许 | `tests/url.rs` | PR+rel |
@@ -685,7 +687,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 | PKG-05 | T1 | install fail | 篡改 checksum；不支持平台；缺 sha 工具；已有安装 | install.sh | checksum 不匹配 exit 1 `refusing to install`；不支持/用法 exit 2；替换前失败不动已有安装；临时目录清理；`install-smoke` 正/负例；`shellcheck` + `sh -n` | `.github/workflows/*.yml`、`tests/install_sh.rs` | PR+rel |
 | PKG-06 | T1 | Release workflow | push `v*` tag；缺 CHANGELOG 节；tag 非 main 祖先 | release.yml | `verify` fmt/clippy/test；`build` 四 target；`publish` 先 ancestor check；CHANGELOG 缺失失败；prerelease；`contents:write`；concurrency；资产齐全 | `.github/workflows/release.yml` | PR+rel |
 | PKG-07 | T1 | CI/supply | PR / 周任务 | CI | PR 矩阵 `ubuntu-latest`+`macos-14`；MSRV job；`cargo-deny` 周更；Dependabot cargo/actions；最小 permissions；`--locked`；provenance；immutability；不发 crates.io/npm | `.github/workflows/*.yml` | PR+rel |
-| PKG-08 | T1 | Docs/signing | 发布前 | 检查文档 | v1 不签名/不公证；README 写 Gatekeeper 右键打开/`xattr`，install.sh 不自动去 quarantine；README 英文+`README.zh-CN.md`；`SECURITY.md` 指向 Private Vulnerability Reporting；无 CONTRIBUTING/issue/PR 模板/逐文件 license header；`tcamp uninstall` 不删二进制并提示 `rm "$(command -v tcamp)"`；无 updater | `tests/docs.rs` | PR+rel |
+| PKG-08 | T1 | Docs/signing | 发布前 | 检查文档 | v1 不签名/不公证；`README.md` + `README.zh-CN.md` 作为 docs 入口：6 个 H2 中英文对齐、无 H3、无 Troubleshooting/Known limitations/Uninstall、只重复 7 项白名单（Implementation Decisions §8）与 Security 摘要，并按要求链 docs 三页（Install/Quickstart→Start，Configuration→Reference，Security→Security）；Gatekeeper、卸载、已知限制、ownership 细节只在 docs，`install.sh` 不自动去 quarantine；`SECURITY.md` 指向 Private Vulnerability Reporting；无 CONTRIBUTING/issue/PR 模板/逐文件 license header；无 updater | `tests/docs.rs`、`tests/release_workflow.rs`（SECURITY / CONTRIBUTING / license header） | PR+rel |
 
 #### NFR — 非功能
 
@@ -694,7 +696,7 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 | NFR-01 | T1 | Startup latency | release build；warm FS；20 次 | `tcamp --version`/`--help`；离线 `status`/`doctor` | p95：`--version`/`--help` ≤100ms；`status`/`doctor` ≤500ms；release 硬门禁，PR 只记录 | `tests/perf.rs` | rel |
 | NFR-02 | T1 | Binary size | release artifacts | 测量 | 未压缩 ≤15 MiB/target；`tar.gz` ≤6 MiB/target；release 硬门禁 | `.github/workflows/release.yml` | rel |
 | NFR-03 | T1 | No telemetry | 离线命令；dead proxy；静态审计 | 运行命令 | 除 login/doctor `--network`/`--verify`/preflight 模型检查外，0 出站请求；无更新检查/分析；dead proxy 下离线命令正常 | `tests/nfr.rs` | PR+rel |
-| NFR-04 | T1 | Redaction | sentinel key；全命令/JSON/diff/备份 | 扫描输出 | 完整 key 不出现在 stdout/stderr/JSON/diff/备份；掩码 `sk-…` + 后 4 位；request_id 仅 JSON/`-v` | `tests/redaction.rs` | PR+rel |
+| NFR-04 | T1 | Redaction | sentinel key；全命令/JSON/diff/备份 | 扫描输出 | 完整 key 不出现在 stdout/stderr/JSON/diff；`tcamp` 生成的日志/错误/hint 同样不含 key；变更前备份按原文件字节保存（`0600`），可含用户预置的字面量 API key，但不含 `tcamp` 保存的 API key；掩码 `sk-…` + 后 4 位；request_id 仅 JSON/`-v` | `tests/redaction.rs` | PR+rel |
 
 #### NEG — 负向与范围边界
 
@@ -726,13 +728,13 @@ Canonical spec = map + 已关闭 ticket + 本 comment；`SPEC.md` 由实现 effo
 
 | ID | Tier | Area | Precondition / Fixture | Action | Expected | Evidence | Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| DOC-01 | T2 | Install | README EN/zh-CN | 审查 | 覆盖 curl 安装、版本锁定、校验和、支持平台、`TCAMP_INSTALL_DIR`、PATH、Gatekeeper 说明 | `RELEASE-CHECKLIST.md#DOC-01` | rel |
-| DOC-02 | T2 | Quickstart | README EN/zh-CN | 审查 | `tcamp login` → `tcamp claude/pi/kimi`；首次引导/非 TTY；`--no-launch` | `RELEASE-CHECKLIST.md#DOC-02` | rel |
-| DOC-03 | T2 | Configuration | README EN/zh-CN | 审查 | 目标路径、overlay、ownership、managed.toml、drift/冲突/`--force`、不落 key | `RELEASE-CHECKLIST.md#DOC-03` | rel |
-| DOC-04 | T2 | Troubleshooting | README EN/zh-CN | 审查 | 无 key、401、402、网络、harness 未安装/版本过低、配置损坏、Claude 404/anthropic deployment | `RELEASE-CHECKLIST.md#DOC-04` | rel |
-| DOC-05 | T2 | Security/limits | README EN/zh-CN + SECURITY.md | 审查 | 凭据路径/0600、key 只在启动注入、Portal 吊销、uninstall 不删凭据；Known limitations：Codex、Claude live smoke、Windows、无 keyring/热轮换/项目级 | `RELEASE-CHECKLIST.md#DOC-05` | rel |
-| DOC-06 | T2 | Uninstall | README EN/zh-CN | 审查 | `tcamp uninstall` 清理配置、保留凭据/备份、提示 `rm "$(command -v tcamp)"`；不提供 updater | `RELEASE-CHECKLIST.md#DOC-06` | rel |
-| DOC-07 | T2 | Terminology/parity | README EN/zh-CN + SPEC.md | 审查 | 使用 `GLOSSARY.md` 术语，不用禁用同义词；英文/中文内容对齐；CLI 输出英文 | `RELEASE-CHECKLIST.md#DOC-07` | rel |
+| DOC-01 | T2 | Install | README EN/zh-CN + docs Start › Install | 审查 | README 只保留 canonical install 命令、一条 `TCAMP_VERSION` pin、OS 行、`not signed or notarized`、`no updater, re-run the installer` 并链 docs；docs 覆盖 curl 安装、版本锁定、校验和、支持平台、`TCAMP_INSTALL_DIR`、PATH、Gatekeeper 说明 | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-01` | rel |
+| DOC-02 | T2 | Quickstart | README EN/zh-CN + docs Start › Log in and Configure and launch | 审查 | README 保留四行 quickstart 与一句 summary 并链 docs；docs 覆盖 `tcamp login` → `tcamp claude/pi/kimi`、首次引导/非 TTY、`--no-launch`；README 不重复这些细节 | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-02` | rel |
+| DOC-03 | T2 | Configuration | README EN/zh-CN + docs Reference › Config targets | 审查 | README 保留一句 + 三行 Config target 表并链 docs；docs 覆盖目标路径、overlay、ownership、managed.toml、drift/冲突/`--force`、不落 key；README 不重复 ownership 细节 | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-03` | rel |
+| DOC-04 | T2 | Troubleshooting | docs Security › Troubleshooting；README EN/zh-CN 无该章节 | 审查 | docs 覆盖无 key、401、402、网络、harness 未安装/版本过低、配置损坏、Claude 404/anthropic deployment；README 不保留 Troubleshooting | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-04` | rel |
+| DOC-05 | T2 | Security/limits | README EN/zh-CN + docs Security + SECURITY.md | 审查 | README 保留安全摘要（`0600`/`0700`、原子写、拒绝 symlink、Launch 注入、字面量 API key（README 称 `literal key`）备份 caveat、运行中的 Harness 保留旧 key 直到重启、Portal 吊销、无 telemetry/更新检查）并链 docs 与 `SECURITY.md`；docs 覆盖凭据路径/`0600`、key 只在启动注入、Portal 吊销、uninstall 不删凭据、Known limitations（Codex、Claude live smoke、Windows、无 keyring/热轮换/项目级）；README 不保留 Known limitations | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-05` | rel |
+| DOC-06 | T2 | Uninstall | docs Reference › Uninstall；README EN/zh-CN 无该章节 | 审查 | docs 覆盖 `tcamp uninstall` 清理配置、保留凭据/备份、提示 `rm "$(command -v tcamp)"`、不提供 updater；README 只保留白名单中的 `no updater, re-run the installer` 句，不保留卸载细节 | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-06` | rel |
+| DOC-07 | T2 | Terminology/parity | README EN/zh-CN + docs + SPEC.md | 审查 | 全部使用 `GLOSSARY.md` 术语，不用禁用同义词；README 无 H3、语言切换与 `v0.1` / `[SPEC.md]` / `[GLOSSARY.md]` 链接存在，英文/中文 6 个 H2 对齐、docs 链接与白名单事实一致；docs 为唯一权威，README 只做入口、白名单重复与 Security 摘要；CLI 输出英文 | `tests/docs.rs`、`RELEASE-CHECKLIST.md#DOC-07` | rel |
 
 ### 6. 真实 smoke 操作定义（T2）
 

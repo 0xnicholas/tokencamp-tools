@@ -170,6 +170,22 @@ Local runs on 2026-11-08 could not reach `https://api.tokencamp.com`; all model 
 | DOC-06 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | Uninstall section covers cleanup, keeping credentials/backups, `rm "$(command -v tcamp)"`, and no updater. |
 | DOC-07 | 2026-11-07 | macOS 13.7.8 x86_64 | n/a | n/a | pass | n/a | README EN/ZH have eight aligned H2 sections; GLOSSARY terms are used, banned synonyms are absent (`tests/docs.rs`), and CLI output stays English. |
 
+## README/docs whitelist (post-v0.1.0)
+
+`README.md` and `README.zh-CN.md` are entry points to the docs site; `docs.tokencamp.com` is the sole authority for user-facing facts. The README review on 2026-11-14 checked the seven-item duplication whitelist; nothing else from the docs site is repeated.
+
+| # | Whitelisted fact | README location | Docs authority |
+| --- | --- | --- | --- |
+| 1 | canonical install command | Install | Start › Install |
+| 2 | one `TCAMP_VERSION=v0.1.0` pin example | Install | Start › Install |
+| 3 | OS support line | Install | Start › Install |
+| 4 | four-line quickstart | Quickstart | Start › Log in and Configure and launch |
+| 5 | three-row Config target table | Configuration | Reference › Config targets |
+| 6 | no updater, re-run the installer | Install | Reference › Uninstall |
+| 7 | not signed or notarized | Install | Start › Install |
+
+The README H2 set is Documentation, Install, Quickstart, Configuration, Security, License; Troubleshooting, Known limitations, and Uninstall are docs-only. The v0.1 corrections C2 (Pi `settings.json` with `defaultProvider`/`defaultModel`) and C3 (a pre-existing literal key is kept in the `0600` pre-change backup) are stated in the retained sections; C4, C5, C8, and C12 were removed together with their sections and remain documented on the docs site. `cargo test --test docs` asserts the H2 parity, the three top-level and per-section docs links, the whitelist entries, and the absence of the removed sections. This section supersedes the README coverage recorded in DOC-01..DOC-07 for releases after v0.1.0: DOC-07's "eight aligned H2 sections" describes the v0.1.0 README, while the post-v0.1.0 README has the six H2s listed above.
+
 ## Known deviations
 
 - CI uses `macos-15` (arm64) instead of the SPEC's `macos-14`: `macos-14` jobs were cancelled before runner assignment, and `macos-15` is the available arm64 image. Coverage remains macOS arm64.

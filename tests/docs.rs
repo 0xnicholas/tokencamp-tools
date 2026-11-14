@@ -1,10 +1,55 @@
 #![cfg(unix)]
 mod support;
 
-use support::text::{assert_contains, assert_contains_ignoring_case, read};
+use support::text::{assert_absent, assert_contains, assert_contains_ignoring_case, read};
 
 const README_EN: &str = "README.md";
 const README_ZH: &str = "README.zh-CN.md";
+
+const DOCS_START: &str = "https://docs.tokencamp.com/tools/tcamp";
+const DOCS_REFERENCE: &str = "https://docs.tokencamp.com/tools/tcamp/reference";
+const DOCS_SECURITY: &str = "https://docs.tokencamp.com/tools/tcamp/security";
+
+#[derive(Clone, Copy)]
+struct Sections {
+    documentation: &'static str,
+    install: &'static str,
+    quickstart: &'static str,
+    configuration: &'static str,
+    security: &'static str,
+    license: &'static str,
+}
+
+const EN: Sections = Sections {
+    documentation: "## Documentation",
+    install: "## Install",
+    quickstart: "## Quickstart",
+    configuration: "## Configuration",
+    security: "## Security",
+    license: "## License",
+};
+
+const ZH: Sections = Sections {
+    documentation: "## 文档",
+    install: "## 安装",
+    quickstart: "## 快速开始",
+    configuration: "## 配置",
+    security: "## 安全",
+    license: "## 许可证",
+};
+
+impl Sections {
+    fn headings(self) -> Vec<&'static str> {
+        vec![
+            self.documentation,
+            self.install,
+            self.quickstart,
+            self.configuration,
+            self.security,
+            self.license,
+        ]
+    }
+}
 
 fn h2_headings(text: &str) -> Vec<&str> {
     text.lines()
@@ -12,246 +57,259 @@ fn h2_headings(text: &str) -> Vec<&str> {
         .collect()
 }
 
+fn section<'a>(text: &'a str, heading: &str) -> &'a str {
+    let start = text
+        .find(heading)
+        .unwrap_or_else(|| panic!("README is missing the {heading:?} section"));
+    let body = &text[start + heading.len()..];
+    match body.find("\n## ") {
+        Some(end) => &body[..end],
+        None => body,
+    }
+}
+
 #[test]
-fn readmes_are_linked_and_aligned_in_structure() {
+fn readmes_are_linked_and_share_the_docs_entry_structure() {
     let english = read(README_EN);
     let chinese = read(README_ZH);
-    assert_contains(&english, "README.zh-CN.md");
-    assert_contains(&chinese, "README.md");
 
-    let english_headings = h2_headings(&english);
-    let chinese_headings = h2_headings(&chinese);
-    assert_eq!(
-        english_headings.len(),
-        chinese_headings.len(),
-        "README.md and README.zh-CN.md must cover the same sections\nEN: {english_headings:?}\nZH: {chinese_headings:?}"
+    assert_contains(&english, "[简体中文](./README.zh-CN.md)");
+    assert_contains(&chinese, "[English](./README.md)");
+    for text in [&english, &chinese] {
+        assert_contains(text, "v0.1");
+        assert_contains(text, "Claude Code");
+        assert_contains(text, "Kimi Code");
+        assert_contains(text, "[SPEC.md](./SPEC.md)");
+        assert_contains(text, "[GLOSSARY.md](./GLOSSARY.md)");
+    }
+
+    assert_eq!(h2_headings(&english), EN.headings());
+    assert_eq!(h2_headings(&chinese), ZH.headings());
+
+    for heading in ["## Troubleshooting", "## Known limitations", "## Uninstall"] {
+        assert_absent(&english, heading);
+    }
+    for heading in ["## 故障排查", "## 已知限制", "## 卸载"] {
+        assert_absent(&chinese, heading);
+    }
+    for text in [&english, &chinese] {
+        assert!(
+            !text.lines().any(|line| line.starts_with("### ")),
+            "the README entry point must not grow H3 subsections"
+        );
+    }
+}
+
+#[test]
+fn readmes_link_the_docs_authority_from_the_top_block_and_each_retained_section() {
+    let english = read(README_EN);
+    let chinese = read(README_ZH);
+
+    for (text, sections) in [(&english, EN), (&chinese, ZH)] {
+        let documentation = section(text, sections.documentation);
+        for url in [DOCS_START, DOCS_REFERENCE, DOCS_SECURITY] {
+            assert_contains(documentation, url);
+        }
+        assert_contains(section(text, sections.install), DOCS_START);
+        assert_contains(section(text, sections.quickstart), DOCS_START);
+        assert_contains(section(text, sections.configuration), DOCS_REFERENCE);
+        assert_contains(section(text, sections.security), DOCS_SECURITY);
+    }
+}
+
+#[test]
+fn readmes_repeat_only_the_whitelisted_install_facts() {
+    let english = read(README_EN);
+    let chinese = read(README_ZH);
+    let english_install = section(&english, EN.install);
+    let chinese_install = section(&chinese, ZH.install);
+
+    for install in [english_install, chinese_install] {
+        assert_contains(
+            install,
+            "https://github.com/0xnicholas/tokencamp-tools/releases/latest/download/install.sh | sh",
+        );
+        assert_eq!(
+            install.matches("TCAMP_VERSION=v0.1.0").count(),
+            1,
+            "the README keeps exactly one pinned install example"
+        );
+        for platform in ["macOS", "Linux", "x86_64", "arm64", "Windows"] {
+            assert_contains(install, platform);
+        }
+    }
+    assert_contains_ignoring_case(english_install, "not signed or notarized");
+    assert_contains_ignoring_case(english_install, "no updater");
+    assert_contains_ignoring_case(english_install, "re-run the installer");
+    assert_contains(chinese_install, "不签名");
+    assert_contains(chinese_install, "不公证");
+    assert_contains(chinese_install, "updater");
+    assert_contains(chinese_install, "重新运行安装器");
+
+    for install in [english_install, chinese_install] {
+        for removed in [
+            "TCAMP_INSTALL_DIR",
+            "SHA256SUMS",
+            "xattr",
+            "Gatekeeper",
+            "quarantine",
+            "sh -s -- --version",
+            "--version",
+        ] {
+            assert_absent(install, removed);
+        }
+    }
+    assert_absent(english_install, "checksum");
+    assert_absent(chinese_install, "校验和");
+}
+
+#[test]
+fn readmes_keep_the_quickstart_to_four_commands_and_one_sentence() {
+    let english_readme = read(README_EN);
+    let chinese_readme = read(README_ZH);
+    let english = section(&english_readme, EN.quickstart);
+    let chinese = section(&chinese_readme, ZH.quickstart);
+
+    for quickstart in [english, chinese] {
+        for command in ["tcamp login", "tcamp claude", "tcamp pi", "tcamp kimi"] {
+            assert_contains(quickstart, command);
+        }
+        for removed in [
+            "--no-launch",
+            "--dry-run",
+            "--json",
+            "--key-stdin",
+            "TOKENCAMP_API_KEY",
+            "missing_key",
+            "Write it?",
+            "TTY",
+        ] {
+            assert_absent(quickstart, removed);
+        }
+    }
+    assert_contains_ignoring_case(english, "stores an existing key");
+    assert_contains_ignoring_case(english, "Configure and Launch");
+    assert_contains(chinese, "保存已有的 key");
+    assert_contains(chinese, "Configure 并 Launch");
+}
+
+#[test]
+fn readmes_keep_the_three_row_config_table_with_both_pi_targets() {
+    let english_readme = read(README_EN);
+    let chinese_readme = read(README_ZH);
+    let english = section(&english_readme, EN.configuration);
+    let chinese = section(&chinese_readme, ZH.configuration);
+
+    for table in [english, chinese] {
+        assert_contains(table, "| Harness | Config target | Launch |");
+        assert_eq!(
+            table.lines().filter(|line| line.starts_with('|')).count(),
+            5,
+            "the Config table keeps one header, one separator, and three rows"
+        );
+        for token in [
+            "Claude Code",
+            "Kimi Code",
+            "$XDG_CONFIG_HOME/tokencamp/harnesses/claude/settings.json",
+            "harnesses/claude/settings.json",
+            "$PI_CODING_AGENT_DIR/models.json",
+            ".pi/agent/models.json",
+            ".pi/agent/settings.json",
+            "$KIMI_CODE_HOME/config.toml",
+            ".kimi-code/config.toml",
+            "defaultProvider",
+            "defaultModel",
+            "claude --settings",
+            "pi --provider tokencamp",
+            "kimi -m",
+        ] {
+            assert_contains(table, token);
+        }
+        for removed in [
+            "managed.toml",
+            "Ownership manifest",
+            "Drift",
+            "Conflict",
+            "--force",
+            "--yes",
+            "api_key_env",
+            "providers.tokencamp",
+        ] {
+            assert_absent(table, removed);
+        }
+    }
+    assert_contains(english, "writes only user-level Config targets");
+    assert_contains(chinese, "只写用户级 Config target");
+}
+
+#[test]
+fn readmes_summarize_security_with_the_literal_key_backup_caveat() {
+    let english_readme = read(README_EN);
+    let chinese_readme = read(README_ZH);
+    let english = section(&english_readme, EN.security);
+    let chinese = section(&chinese_readme, ZH.security);
+
+    for security in [english, chinese] {
+        for token in [
+            "0600",
+            "0700",
+            "symlink",
+            "Launch",
+            "Config target",
+            "Portal",
+            "SECURITY.md",
+            DOCS_SECURITY,
+        ] {
+            assert_contains(security, token);
+        }
+    }
+    assert_contains_ignoring_case(english, "atomic");
+    assert_contains_ignoring_case(english, "telemetry");
+    assert_contains_ignoring_case(english, "literal key");
+    assert_contains_ignoring_case(english, "backup");
+    assert_contains_ignoring_case(english, "restarts");
+    assert_contains_ignoring_case(english, "revocation");
+    assert_contains_ignoring_case(english, "update checks");
+    assert_contains(english, "pre-change backup");
+    assert_absent(
+        english,
+        "never appears in logs, errors, diffs, JSON, or backups",
     );
 
-    let sections = [
-        ("## Install", "## 安装"),
-        ("## Quickstart", "## 快速开始"),
-        ("## Configuration", "## 配置"),
-        ("## Troubleshooting", "## 故障排查"),
-        ("## Security", "## 安全"),
-        ("## Known limitations", "## 已知限制"),
-        ("## Uninstall", "## 卸载"),
-        ("## License", "## 许可证"),
-    ];
-    for (english_heading, chinese_heading) in sections {
-        assert_contains(&english, english_heading);
-        assert_contains(&chinese, chinese_heading);
-    }
+    assert_contains(chinese, "原子");
+    assert_contains(chinese, "遥测");
+    assert_contains(chinese, "literal key");
+    assert_contains(chinese, "备份");
+    assert_contains(chinese, "重启");
+    assert_contains(chinese, "吊销");
+    assert_contains(chinese, "更新检查");
+    assert_contains(chinese, "变更前备份");
+    assert_absent(chinese, "日志、错误、diff、JSON 或备份");
 }
 
 #[test]
-fn readmes_cover_installation_checksums_platforms_and_gatekeeper() {
+fn readmes_delegate_troubleshooting_limits_and_uninstall_to_the_docs() {
     let english = read(README_EN);
     let chinese = read(README_ZH);
 
-    let shared = [
-        "TCAMP_VERSION",
-        "--version",
-        "TCAMP_INSTALL_DIR",
-        "SHA256SUMS",
-        "xattr",
-        "PATH",
-        "Gatekeeper",
-        "install.sh",
-    ];
-    for token in shared {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
+    for text in [&english, &chinese] {
+        for removed in [
+            "tcamp uninstall",
+            "rm \"$(command -v tcamp)\"",
+            "401",
+            "402",
+            "doctor --network",
+            "missing_key",
+            "--no-launch",
+            "--dry-run",
+            "--json",
+            "--force",
+            "--yes",
+            "Codex",
+        ] {
+            assert_absent(text, removed);
+        }
     }
-
-    assert_contains(
-        &english,
-        "https://github.com/0xnicholas/tokencamp-tools/releases/latest/download/install.sh",
-    );
-    assert_contains(
-        &chinese,
-        "https://github.com/0xnicholas/tokencamp-tools/releases/latest/download/install.sh",
-    );
-    assert_contains(&english, "sh -s -- --version");
-    assert_contains(&chinese, "sh -s -- --version");
-    assert_contains_ignoring_case(&english, "checksum");
-    assert_contains(&chinese, "校验和");
-    assert_contains(&english, "macOS");
-    assert_contains(&chinese, "macOS");
-    assert_contains(&english, "Linux");
-    assert_contains(&chinese, "Linux");
-    assert_contains(&english, "arm64");
-    assert_contains(&chinese, "arm64");
-    assert_contains(&english, "x86_64");
-    assert_contains(&chinese, "x86_64");
-    assert_contains_ignoring_case(&english, "right-click");
-    assert_contains(&chinese, "右键");
-    assert_contains(&english, "xattr -d com.apple.quarantine");
-    assert_contains(&chinese, "xattr -d com.apple.quarantine");
-    assert_contains_ignoring_case(&english, "does not remove quarantine");
-    assert_contains(&chinese, "不会自动移除 quarantine");
-}
-
-#[test]
-fn readmes_cover_quickstart_first_run_and_non_interactive_use() {
-    let english = read(README_EN);
-    let chinese = read(README_ZH);
-
-    for command in ["tcamp login", "tcamp claude", "tcamp pi", "tcamp kimi"] {
-        assert_contains(&english, command);
-        assert_contains(&chinese, command);
-    }
-    for token in ["--no-launch", "--key-stdin", "TOKENCAMP_API_KEY"] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-    assert_contains_ignoring_case(&english, "first run");
-    assert_contains(&chinese, "首次");
-    assert_contains_ignoring_case(&english, "non-TTY");
-    assert_contains(&chinese, "非 TTY");
-    assert_contains_ignoring_case(&english, "Write it?");
-    assert_contains(&chinese, "Write it?");
-    assert_contains_ignoring_case(&english, "CLI output");
-    assert_contains_ignoring_case(&english, "English");
-    assert_contains(&chinese, "CLI 输出");
-    assert_contains(&chinese, "英文");
-}
-
-#[test]
-fn readmes_cover_config_targets_overlays_ownership_and_secrets() {
-    let english = read(README_EN);
-    let chinese = read(README_ZH);
-
-    for token in [
-        "Harness",
-        "Config target",
-        "Overlay",
-        "Ownership manifest",
-        "Managed entry",
-        "Model mapping",
-        "Connection",
-        "Credential",
-        "Active connection",
-        "Drift",
-        "Conflict",
-    ] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-
-    for token in ["--settings", "models.json", "config.toml", "managed.toml"] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-    for token in ["--force", "--yes", "--dry-run"] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-    assert_contains(&english, "harnesses/claude/settings.json");
-    assert_contains(&chinese, "harnesses/claude/settings.json");
-    assert_contains(&english, ".pi/agent/models.json");
-    assert_contains(&chinese, ".pi/agent/models.json");
-    assert_contains(&english, ".kimi-code/config.toml");
-    assert_contains(&chinese, ".kimi-code/config.toml");
-    assert_contains(&english, "providers.tokencamp");
-    assert_contains(&chinese, "providers.tokencamp");
-    assert_contains(&english, "api_key_env");
-    assert_contains(&chinese, "api_key_env");
-    assert_contains_ignoring_case(&english, "no API key");
-    assert_contains(&chinese, "不写入");
-    assert_contains(&chinese, "API key");
-}
-
-#[test]
-fn readmes_cover_troubleshooting_paths() {
-    let english = read(README_EN);
-    let chinese = read(README_ZH);
-
-    for token in ["401", "402", "doctor --network"] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-    assert_contains_ignoring_case(&english, "invalid or expired");
-    assert_contains(&chinese, "无效");
-    assert_contains_ignoring_case(&english, "billing");
-    assert_contains(&chinese, "账单");
-    assert_contains_ignoring_case(&english, "not installed");
-    assert_contains(&chinese, "未安装");
-    assert_contains_ignoring_case(&english, "corrupt");
-    assert_contains(&chinese, "损坏");
-    assert_contains(&english, "anthropic deployment");
-    assert_contains(&chinese, "anthropic deployment");
-    assert_contains(&english, "provider_type: anthropic");
-    assert_contains(&chinese, "provider_type: anthropic");
-    for (english_version, chinese_version) in [
-        ("2.1.304", "2.1.304"),
-        ("1.4.0", "1.4.0"),
-        ("2.1.1", "2.1.1"),
-    ] {
-        assert_contains(&english, english_version);
-        assert_contains(&chinese, chinese_version);
-    }
-}
-
-#[test]
-fn readmes_cover_security_and_known_limitations() {
-    let english = read(README_EN);
-    let chinese = read(README_ZH);
-
-    for token in [
-        "credentials.toml",
-        "0600",
-        "Portal",
-        "keyring",
-        "Codex",
-        "Windows",
-    ] {
-        assert_contains(&english, token);
-        assert_contains(&chinese, token);
-    }
-    assert_contains_ignoring_case(&english, "launch");
-    assert_contains(&chinese, "启动时");
-    assert_contains(&english, "injection");
-    assert_contains(&chinese, "注入");
-    assert_contains_ignoring_case(&english, "revocation");
-    assert_contains(&chinese, "吊销");
-    assert_contains_ignoring_case(&english, "hot rotation");
-    assert_contains(&chinese, "热轮换");
-    assert_contains_ignoring_case(&english, "project-level");
-    assert_contains(&chinese, "项目级");
-    assert_contains_ignoring_case(&english, "Claude live Smoke deferred");
-    assert_contains(&chinese, "Claude live Smoke");
-    assert_contains_ignoring_case(&english, "not signed or notarized");
-    assert_contains(&chinese, "不签名");
-    assert_contains(&chinese, "不公证");
-}
-
-#[test]
-fn readmes_cover_uninstall_semantics() {
-    let english = read(README_EN);
-    let chinese = read(README_ZH);
-
-    for token in [
-        "tcamp uninstall",
-        "rm \"$(command -v tcamp)\"",
-        "credentials",
-        "backups",
-        "binary",
-    ] {
-        assert_contains(&english, token);
-    }
-    for token in [
-        "tcamp uninstall",
-        "rm \"$(command -v tcamp)\"",
-        "凭据",
-        "备份",
-        "二进制",
-    ] {
-        assert_contains(&chinese, token);
-    }
-    assert_contains_ignoring_case(&english, "keeps");
-    assert_contains(&chinese, "保留");
-    assert_contains_ignoring_case(&english, "does not provide an updater");
-    assert_contains(&chinese, "不提供 updater");
 }
 
 #[test]

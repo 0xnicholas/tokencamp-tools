@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `README.md` and `README.zh-CN.md` now link to the docs site as the sole
+  authority and repeat only the install, quickstart, Config target, and
+  security facts; troubleshooting, limitations, and uninstall moved to docs.
+
 ## [0.1.0] - 2026-11-07
 
 ### Added
