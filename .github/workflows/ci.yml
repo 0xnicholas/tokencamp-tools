@@ -23,7 +23,7 @@ jobs:
         # available arm64 macOS image.
         os: [ubuntu-latest, macos-15]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -35,8 +35,8 @@ jobs:
     name: msrv (1.85)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.120.0
       - run: cargo check --all-targets --locked
 
   latency:
@@ -46,7 +46,7 @@ jobs:
       contents: read
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Shell script checks
         run: |
@@ -81,7 +81,7 @@ jobs:
         # available arm64 macOS image.
         os: [ubuntu-latest, macos-15]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Shell script checks
         run: |
